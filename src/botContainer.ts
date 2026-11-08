@@ -15,7 +15,7 @@
 //   2. `onActivityExpired()` is overridden to renew instead of stopping: the
 //      package's default implementation stops the container `sleepAfter` after
 //      the last request, which for us would be forever.
-//   3. The Worker's cron trigger (`triggers.crons`, wrangler.jsonc) calls
+//   3. The Worker's cron trigger (`triggers`, cloudflare.config.ts) calls
 //      `ensureRunning()` every few minutes, which restarts the bot after ANY
 //      stop while the intent says "run" — a deploy's image rollout killing the
 //      instance, a crash, a platform restart (Cloudflare guarantees no instance
@@ -138,7 +138,7 @@ export class BotContainer extends Container<Env> {
    * Persist "running" and restart the container: stop the current instance (if
    * any), wait for it to actually exit, then start fresh. This is what the
    * post-deploy kick calls (POST /bot/restart). A plain startBot() is a no-op
-   * while an instance is still up, and right after `wrangler deploy` the
+   * while an instance is still up, and right after `cf deploy` the
    * still-running instance is the PRE-rollout one — the kick then reported
    * "healthy" against the old container, the rollout killed it seconds later,
    * and the bot stayed down until the next cron tick. Stopping first guarantees
@@ -369,5 +369,5 @@ export class BotContainer extends Container<Env> {
 
 /** The supervisor stub (the one instance named BOT_CONTAINER_NAME). */
 export function botContainerStub(env: Env) {
-  return getContainer(env.BOT_CONTAINER, BOT_CONTAINER_NAME);
+  return getContainer<BotContainer>(env.BOT_CONTAINER, BOT_CONTAINER_NAME);
 }

@@ -1,7 +1,7 @@
 # test/
 
 ## OVERVIEW
-vitest 4, two projects in `vitest.config.ts`: `unit` (Node pool) and `workers` (workerd via `@cloudflare/vitest-pool-workers`, loads `wrangler.jsonc`).
+vitest 4, two projects in `vitest.config.ts`: `unit` (Node pool) and `workers` (workerd via `@cloudflare/vitest-plugin`, loads `cloudflare.config.ts`).
 
 ## WHERE TO LOOK
 | Need | File |
@@ -21,7 +21,7 @@ vitest 4, two projects in `vitest.config.ts`: `unit` (Node pool) and `workers` (
 - Pool is chosen by filename only: `*.workers.test.ts` → `workers`; every other `test/**/*.test.ts` → `unit`.
 - Anything importing `cloudflare:test` / `cloudflare:workers` (directly or via `src/` modules that do, e.g. DOs, `src/index.ts`) MUST be `*.workers.test.ts`; Node cannot resolve those modules.
 - Pure parser/state tests stay `unit` (fast, no runtime).
-- Vars are pinned in `vitest.config.ts`, not inherited from `wrangler.jsonc`: fixtures are captured as `huk123` and src-mode tests need all three sources. Changing production vars must not break the suite.
+- Vars are pinned in `vitest.config.ts`, not inherited from `cloudflare.config.ts`: fixtures are captured as `huk123` and src-mode tests need all three sources. Changing production vars must not break the suite.
 - `fixtures/lobby-session.log` format: one line per message, `c <line>` (client→server) or `S <line>` (server→client); TAB characters inside lines are significant. Loaded via `import log from "./fixtures/lobby-session.log?raw"` (no `node:fs` in workerd), parsed to `{ts, src, msg}` envelopes, fed through the Dispatcher `ingest()` RPC inside `runInDurableObject`.
 - `.gitignore` has `*.log` plus `!test/fixtures/*.log`; a new fixture log must live in `test/fixtures/` or it is silently untracked.
 - DO SQLite persists across tests in the pool: LOS tests reset in `beforeEach` with `POST /api/reset?confirm=true`, then upload what they need through real routes.
@@ -47,13 +47,13 @@ vitest 4, two projects in `vitest.config.ts`: `unit` (Node pool) and `workers` (
 - **`unit`** — the pure protocol/parser/state tests (`test/*.test.ts`), in the default
   Node pool (no runtime).
 - **`workers`** — tests that exercise the Durable Object inside the real **workerd**
-  runtime via **`@cloudflare/vitest-pool-workers`** (its `cloudflareTest` vite plugin
-  loads `wrangler.jsonc`, so the bindings and migrations match production). These
+  runtime via **`@cloudflare/vitest-plugin`** (its `cloudflareTest` vite plugin
+  loads `cloudflare.config.ts`, so the bindings and DO exports match production). These
   are named **`*.workers.test.ts`**. **Vars are pinned for the tests** in
   `vitest.config.ts` (`miniflare.bindings`: `BOT_USERNAME=huk123`, `SRC_MODES=
   teiserver,proxy,rtsapi`) — the fixtures/scenarios are captured as huk123 and the
   src-mode tests need every source enabled — so changing the production vars in
-  wrangler.jsonc (bot account, enabled sources) does NOT break the suite.
+  cloudflare.config.ts (bot account, enabled sources) does NOT break the suite.
 
   `test/dispatcher.replay.workers.test.ts` is the end-to-end DO test: it loads the
   example command log `test/fixtures/lobby-session.log` (`c <line>` / `S <line>`, the

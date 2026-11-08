@@ -74,8 +74,8 @@ names go in `lavabalance/.env` for a local `pnpm run bot` (see `.env.example`).
 
 | In the container | Set where (production) | Meaning |
 |---|---|---|
-| `BOT_LOGIN` | `vars.BOT_USERNAME` in `wrangler.jsonc` | The bot's **lobby account name** (the `LOGIN` user). Also the account that must be a lobby **boss** for `.balance` to work. |
-| `BOT_PASSWORD` | **secret** `BOT_PASSWORD` (`wrangler secret put BOT_PASSWORD`) | That account's **plaintext** password. The bot md5-hashes it itself for the lobby `LOGIN` and uses it as-is for the Teiserver web login. Enter it interactively or with `printf '%s' 'pw' \| pnpm exec wrangler secret put BOT_PASSWORD` — a piped `echo` appends a newline (the bot strips a trailing one, but don't rely on it). NOT the md5 hash. |
+| `BOT_LOGIN` | `BOT_USERNAME` in `cloudflare.config.ts` | The bot's **lobby account name** (the `LOGIN` user). Also the account that must be a lobby **boss** for `.balance` to work. |
+| `BOT_PASSWORD` | **secret** `BOT_PASSWORD` (`pnpm exec wrangler secret put BOT_PASSWORD --name lavabalance`) | That account's **plaintext** password. The bot md5-hashes it itself for the lobby `LOGIN` and uses it as-is for the Teiserver web login. Enter it interactively or with `printf '%s' 'pw' \| pnpm exec wrangler secret put BOT_PASSWORD --name lavabalance` — a piped `echo` appends a newline (the bot strips a trailing one, but don't rely on it). NOT the md5 hash. |
 | `BOT_ADMINS` | `vars.BOT_ADMINS` | Comma-separated account names allowed to whisper admin commands (`.join`, `.lavatoggle`, `.splitparties`), case-insensitive. Empty = admin commands disabled. |
 | `BOT_AUTOJOIN_ROOM` | `vars.BOT_AUTOJOIN_ROOM` | Battle id to join after every login (so reconnects rejoin). In production the supervisor **overrides** this at every container start with the resolved rejoin target (last battle, else the main lava lobby — see "Auto-rejoin"); the static var is only the fallback when neither resolves. |
 | `BOT_TEISERVER_EMAIL` | **secret** `TEISERVER_EMAIL` | Email of the same account, for the Teiserver **web** login (the background party scrape feeding `.balance`). Empty = skip the web login; `.balance` then runs without party data — as it also does in a lobby whose `balanceMode` is `skill`/`random`, where parties are ignored by design and the scrape is skipped. |
@@ -94,25 +94,26 @@ Other secrets the **Worker** uses (not the bot): `CONTROL_TOKEN` (bearer for
 `src=teiserver` scraper login), `BOT_PASSWORD_HASH` (`base64(md5(pw))`, only
 for `tools/connect-test.ts`).
 
-After changing `vars`, `pnpm run deploy`; after changing a secret, the running
+After changing a var in `cloudflare.config.ts`, `pnpm run deploy`; after changing a secret, the running
 container keeps its old environment until restarted (`/bot/stop` + `/bot/start`).
 
 ## SSH into the container
 
-Access is authenticated against `containers[0].authorized_keys` in
-`wrangler.jsonc` (**ssh-ed25519 keys only**, provisioned when an instance
+Access is authenticated against the container's `authorizedKeys` in
+`cloudflare.config.ts` (**ssh-ed25519 keys only**, provisioned when an instance
 starts — add the key, deploy, restart the bot).
 
 ```bash
-pnpm exec wrangler containers list                    # → the container (application) id
-pnpm exec wrangler containers instances <container id>  # → the running instance id
+pnpm exec cf containers applications list            # → the application id (lavabalance-botcontainer)
+pnpm exec cf containers applications instances list --application-id <id> --state active
+                                                     # → the running instance id
 ssh -i ~/.ssh/cloudflare_containers \
-  -o ProxyCommand="pnpm exec wrangler containers ssh --stdio %h" \
+  -o ProxyCommand="pnpm exec cf containers ssh --stdio %h" \
   cloudchamber@<instance id>
 ```
 
-Run it from `lavabalance/` so `pnpm exec` finds the local wrangler. The plain
-`pnpm exec wrangler containers ssh <instance id>` wrapper also works, but it spawns
+Run it from the repo root so `pnpm exec` finds the local `cf`. The plain
+`pnpm exec cf containers ssh <instance id>` wrapper also works, but it spawns
 its own `ssh` which only offers default identity files — a key with another
 name must be `ssh-add`ed first. Failure modes: **400** = no matching key on
 that instance (not deployed, or the instance predates the deploy);
@@ -285,8 +286,10 @@ mean should track how often the favourite wins.
 ## Deploying
 
 ```bash
-pnpm exec wrangler secret put BOT_PASSWORD        # once (plaintext password of BOT_USERNAME)
-pnpm exec wrangler secret put CONTROL_TOKEN       # optional
+pnpm exec wrangler secret put BOT_PASSWORD --name lavabalance   # once (plaintext password of BOT_USERNAME)
+pnpm exec wrangler secret put CONTROL_TOKEN --name lavabalance  # optional
+# (cf cannot set a single secret yet; wrangler does not read cloudflare.config.ts,
+#  hence --name)
 export CONTROL_TOKEN=...                    # bot:kick sends it as the bearer token
 pnpm run deploy                              # Worker + builds/pushes the image (Docker running).
                                             # The rollout stops the instance; the cron's next
@@ -294,7 +297,7 @@ pnpm run deploy                              # Worker + builds/pushes the image 
                                             # image. Check /bot/status (or the /bot page).
 ```
 
-The deploy script does not kick the bot: a kick right after `wrangler deploy`
+The deploy script does not kick the bot: a kick right after `cf deploy`
 races the rollout (`POST /bot/start` no-ops against the still-running
 pre-rollout instance, and an immediate `POST /bot/restart` can start the OLD
 image, which the rollout then kills again). Wait for the cron, or once the
@@ -302,8 +305,12 @@ rollout has settled run `pnpm run bot:kick` — it POSTs `/bot/restart` (bearer
 `$CONTROL_TOKEN`, base URL overridable via `BOT_CONTROL_URL`, retrying up to
 6 times 10 s apart) and also serves as the manual bounce without a deploy.
 
-Without Docker: `pnpm exec wrangler deploy --containers-rollout=none` ships the Worker
-only. Containers require the Workers Paid plan; a `lite` instance 24/7 costs
+Worker only: `pnpm exec cf deploy --containers-rollout none` leaves the running
+container application untouched. `cf` builds the image even then, so without
+Docker point `BOT_IMAGE` at the image already deployed (the one
+`pnpm exec cf containers applications list` shows for `lavabalance-botcontainer`):
+`BOT_IMAGE=<current image> pnpm exec cf deploy --containers-rollout none`; `cloudflare.config.ts` then uses that reference instead of
+building `./Dockerfile`. Containers require the Workers Paid plan; a `lite` instance 24/7 costs
 roughly $1.70/month on top of it.
 
 ## Running locally

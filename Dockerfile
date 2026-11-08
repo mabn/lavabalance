@@ -1,13 +1,13 @@
 # The lavabalance Node bot (src/bot/bot.ts) as a Cloudflare Container image.
-# Built and pushed by `wrangler deploy` (Docker must be running locally); the
+# Built and pushed by `cf deploy` (Docker must be running locally); the
 # BotContainer Durable Object (src/botContainer.ts) starts it and keeps it up.
-# wrangler builds the image for linux/amd64 itself (no --platform here — the
+# The deploy builds the image for linux/amd64 itself (no --platform here — the
 # Docker linter rejects a constant platform in FROM).
 FROM node:26-slim
 
 WORKDIR /app
 
-# Debugging comforts for `wrangler containers ssh` (the slim image has no ps, no
+# Debugging comforts for `cf containers ssh` (the slim image has no ps, no
 # pager, no editor): procps (ps/top), less, vim (full — vim-tiny has no syntax
 # highlighting) with a minimal colour-enabled config, and curl for the health
 # endpoint. ~40 MB on top of the image; not used by the bot itself.
@@ -46,7 +46,7 @@ COPY src ./src
 ENV BOT_HEALTH_PORT=8080
 EXPOSE 8080
 
-# Where things are, for a shell in the instance (`wrangler containers ssh`):
+# Where things are, for a shell in the instance (`cf containers ssh`):
 #   the bot   = PID 1, `tsx src/bot/bot.ts`, cwd /app        → ps aux
 #   protocol  = /app/commands_<YYYY-MM-DD>.log (both directions) → less +F /app/commands_*.log
 #   console   = /app/bot_<YYYY-MM-DD>.log (everything console.* prints — status,

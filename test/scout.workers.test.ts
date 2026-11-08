@@ -79,7 +79,7 @@ describe("POST /api/scout/profiles", () => {
       await waitOnExecutionContext(ctx);
       return res.status;
     };
-    // Configured (wrangler.jsonc carries ACCESS_SCOUT_AUD): no assertion — e.g. a
+    // Configured (cloudflare.config.ts carries ACCESS_SCOUT_AUD): no assertion — e.g. a
     // request that skipped Access on workers.dev — or one that is not a valid token
     // for the scout application is a 401.
     expect(await post({})).toBe(401);

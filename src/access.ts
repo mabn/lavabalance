@@ -21,7 +21,7 @@
 // or just "<team>") and ACCESS_AUD (the application's Audience tag).
 // FAIL-CLOSED: with either missing nobody is an admin through Access. Local
 // dev, where no Access cookie can exist, opts in with ADMIN_OPEN=true in
-// .dev.vars — never in wrangler.jsonc.
+// .dev.vars — never in cloudflare.config.ts.
 //
 // The control token (CONTROL_TOKEN) is accepted as an admin credential too,
 // when it is CONFIGURED and matches, so a script keeps driving the routes

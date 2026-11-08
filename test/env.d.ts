@@ -2,8 +2,8 @@
 
 // Pull in the base `cloudflare:test` module types (SELF, env, runInDurableObject, …)
 // shipped by the pool, then augment its `ProvidedEnv` with our generated `Env`
-// (worker-configuration.d.ts) so `env.DISPATCHER` and the bindings are typed.
-/// <reference types="@cloudflare/vitest-pool-workers/types" />
+// (.cloudflare/types, from cloudflare.config.ts) so `env.DISPATCHER` and the bindings are typed.
+/// <reference types="@cloudflare/vitest-plugin/types" />
 declare module "cloudflare:test" {
   interface ProvidedEnv extends Env {}
 }
