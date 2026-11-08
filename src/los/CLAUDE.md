@@ -120,8 +120,9 @@ The list page (`/`) is unchanged (it never showed ratings).
 Historically a **separate Worker** ("lavaos", `wrangler.lavaos.toml` — deleted); since
 the merge its routes (`/api/games`, `/api/ranking`, `/api/players[…]`, `/api/reset` —
 disjoint from the lobby API) are mounted into the bot Worker's Hono app, the `LosDO`
-lives in `wrangler.jsonc` (migration v6), and the **lavabalance.fogofwar.dev** custom domain
-routes to the merged Worker (top-level `routes` key; `workers_dev = true` keeps the bot
+is one of the Worker's Durable Object exports in `cloudflare.config.ts` (created by the
+old wrangler migration v6), and the **lavabalance.fogofwar.dev** custom domain
+routes to the merged Worker (`worker.domains`; `workersDev: true` keeps the bot
 UI's workers.dev URL). The design is `docs/lavaos-cloudflare-data-model.md` (start
 there; it documents the schema, the upload contract and every endpoint). NOTE: DO
 storage did NOT move with the merge — after the first merged deploy, delete the old

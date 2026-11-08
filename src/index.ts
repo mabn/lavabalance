@@ -816,7 +816,7 @@ app.get("/battles/:battle/log", async (c) => {
 
 export default {
   fetch: app.fetch,
-  // Cron (wrangler.jsonc `triggers.crons`): keep the bot container up. A no-op
+  // Cron (cloudflare.config.ts `triggers.scheduled`): keep the bot container up. A no-op
   // unless /bot/start persisted the intent to run.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(botContainerStub(env).ensureRunning());

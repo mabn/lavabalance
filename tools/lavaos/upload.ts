@@ -35,7 +35,7 @@ if (args.help) {
 
 Options:
   --data DIR          directory with scraped YYYY-MM-DD.json files (default: data)
-  --url URL           the LOS service (default: http://localhost:8787 — wrangler dev)
+  --url URL           the LOS service (default: http://localhost:8787 — pnpm run dev)
   --from YYYY-MM-DD   first day file to upload (default: earliest)
   --to YYYY-MM-DD     last day file to upload (default: latest)`,
   );

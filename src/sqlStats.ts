@@ -21,7 +21,7 @@
 // exact for these DOs' methods — their SQL runs before any await. Statements
 // run after an await are billed to the innermost wrapped method executing them
 // (e.g. RatingsDO's background scrape lands on `writeChanged`), or to
-// "(outside any method)" when there is none. Under `wrangler dev` that line
+// "(outside any method)" when there is none. Under `cf dev` that line
 // always shows a couple of rows: Miniflare's DO wrapper records the object's
 // name in its own `__miniflare_do_name` table through the same exec handle
 // right after construction. Local-dev only; production has no such line.

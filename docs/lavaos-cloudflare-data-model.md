@@ -3,7 +3,7 @@
 **Status: implemented** — `src/los/` (`losGames.ts` pure logic, `losDO.ts` the
 DO, `index.ts` the routes). Originally its own "lavaos" Worker
 (`wrangler.lavaos.toml`, deleted); the routes and the LosDO are now part of
-the main lavabalance Worker (`wrangler.jsonc`, `pnpm run deploy`), with the
+the main lavabalance Worker (`cloudflare.config.ts`, `pnpm run deploy`), with the
 lavabalance.fogofwar.dev custom domain routed there — public URLs unchanged. Where
 the text below says "the Worker", read "the LOS routes of the lavabalance
 Worker". One deviation from the text below: the API is

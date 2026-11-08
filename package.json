@@ -7,10 +7,11 @@
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy && echo 'Deployed. The cron restarts the bot within 5 min; check /bot/status, or once the rollout has settled force it with: pnpm run bot:kick'",
+    "dev": "cf dev",
+    "deploy": "cf deploy && echo 'Deployed. The cron restarts the bot within 5 min; check /bot/status, or once the rollout has settled force it with: pnpm run bot:kick'",
     "bot:kick": "curl -fsS --retry 6 --retry-delay 10 -X POST \"${BOT_CONTROL_URL:-https://lavabalance.fogofwar.dev}/bot/restart\" -H \"authorization: Bearer $CONTROL_TOKEN\" || { echo; echo \"bot:kick FAILED — the Worker deployed but the bot was not restarted. Export CONTROL_TOKEN and run: pnpm run bot:kick\"; exit 1; }",
-    "typecheck": "tsc --noEmit",
+    "types": "cf workers types",
+    "typecheck": "cf workers types && tsc --noEmit",
     "test": "vitest run",
     "bot": "tsx src/bot/bot.ts",
     "lavaos:scrape": "tsx tools/lavaos/scrape.ts",
@@ -21,11 +22,12 @@
     "connect-test": "tsx tools/connect-test.ts"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/vitest-plugin": "1.6.0",
+    "cf": "1.0.0-beta.28",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
-    "wrangler": "^4.129.0"
+    "wrangler": "^4.158.0"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",

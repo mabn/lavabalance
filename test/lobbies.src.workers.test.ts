@@ -1,6 +1,6 @@
 // The /api/lobbies `src` parameter: default + validation.
 //
-// Runs in the real workerd runtime (vitest-pool-workers loads wrangler.jsonc). We only
+// Runs in the real workerd runtime (the Vitest plugin loads cloudflare.config.ts). We only
 // assert routing/validation here — the actual data sources need a live Teiserver/bar-rts,
 // so we lean on the fact that, with no TEISERVER_* secrets configured, the teiserver
 // source fails fast with a 502 (which is what distinguishes the default from `proxy`).
