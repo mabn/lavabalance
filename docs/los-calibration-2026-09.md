@@ -214,7 +214,7 @@ Run the checks periodically, and after any change to the rating rule:
 ```bash
 # from the lavabalance root; standard library only
 python3 tools/lavaos/calibration.py --from 2026-09-04 --baseline-from 2026-08-15
-python3 tools/lavaos/calibration.py --from 2026-09-04 --url http://localhost:8787   # wrangler dev
+python3 tools/lavaos/calibration.py --from 2026-09-04 --url http://localhost:8787   # pnpm run dev
 ```
 
 It prints the port check (`predictWin` re-implemented in the script against the

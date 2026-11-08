@@ -8,9 +8,9 @@
 // the DO's RPC surface and asserts the battle, roster, skills and ranks the stream
 // should have produced.
 //
-// Runs inside the real workerd runtime via @cloudflare/vitest-pool-workers, which
-// loads wrangler.jsonc so the DISPATCHER binding and migrations (vars pinned in vitest.config.ts: BOT_USERNAME=huk123) and
-// migrations match production. See https://developers.cloudflare.com/durable-objects/
+// Runs inside the real workerd runtime via @cloudflare/vitest-plugin, which
+// loads cloudflare.config.ts so the DISPATCHER binding and DO exports match
+// production (vars pinned in vitest.config.ts: BOT_USERNAME=huk123). See https://developers.cloudflare.com/durable-objects/
 // examples/testing-with-durable-objects/.
 
 import { SELF, env, runInDurableObject } from "cloudflare:test";

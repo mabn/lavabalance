@@ -1,4 +1,4 @@
-# Shell config for `wrangler containers ssh` sessions in the bot container
+# Shell config for `cf containers ssh` sessions in the bot container
 # (copied to /root/.bashrc AND named by ENV, so it's read whether the SSH server
 # starts bash as a login shell, an interactive shell, or as `sh`).
 case $- in *i*) ;; *) return ;; esac

@@ -6,7 +6,7 @@
 // battles) and streams it through the live DO, measuring throughput, to find out whether
 // the replay path scales — and to guard against a regression that reintroduces a stall.
 //
-// Runs inside workerd via @cloudflare/vitest-pool-workers (see the sibling
+// Runs inside workerd via @cloudflare/vitest-plugin (see the sibling
 // dispatcher.replay.workers.test.ts for the basic end-to-end test).
 
 import { env, runInDurableObject } from "cloudflare:test";

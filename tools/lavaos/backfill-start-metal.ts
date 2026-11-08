@@ -37,7 +37,7 @@ if (args.help) {
     `Usage: pnpm run lavaos:backfill-start-metal -- [options]
 
 Options:
-  --url URL      the LOS service (default: http://localhost:8787 — wrangler dev)
+  --url URL      the LOS service (default: http://localhost:8787 — pnpm run dev)
   --from ISO     oldest start time to backfill (default: ${START_METAL_RULE_FROM})
   --batch N      games per upload (default: 20)
   --dry          list and fetch, print each game's start metal storage, upload nothing`,

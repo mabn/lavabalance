@@ -12,7 +12,7 @@
 // (dropping the old id from lava_lobbies), and gates `currentBattle` adoption on the
 // joiner being the bot. This streams the scenario through the live Dispatcher DO and
 // asserts the leak is gone and rosters stay separate. Runs in workerd via
-// @cloudflare/vitest-pool-workers (BOT_USERNAME=huk123 pinned in vitest.config.ts).
+// @cloudflare/vitest-plugin (BOT_USERNAME=huk123 pinned in vitest.config.ts).
 
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
