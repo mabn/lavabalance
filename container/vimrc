@@ -1,0 +1,19 @@
+" Minimal vim config for the bot container (copied to /root/.vimrc by the
+" Dockerfile). Colours + the basics; nothing that needs plugins.
+syntax on
+set background=dark
+set termguicolors
+set number
+set ruler
+set showcmd
+set incsearch
+set hlsearch
+set ignorecase
+set smartcase
+set mouse=
+set tabstop=2
+set shiftwidth=2
+set expandtab
+set backspace=indent,eol,start
+set nocompatible
+filetype plugin indent on

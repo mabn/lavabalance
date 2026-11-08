@@ -1,0 +1,24 @@
+# Shell config for `wrangler containers ssh` sessions in the bot container
+# (copied to /root/.bashrc AND named by ENV, so it's read whether the SSH server
+# starts bash as a login shell, an interactive shell, or as `sh`).
+case $- in *i*) ;; *) return ;; esac
+
+export TERM="${TERM:-xterm-256color}"
+export LS_OPTIONS='--color=auto'
+export EDITOR=vim
+export PAGER=less
+export LESS='-R'
+export HISTSIZE=5000
+export HISTFILE=/root/.bash_history
+shopt -s histappend checkwinsize 2>/dev/null
+
+alias ls='ls $LS_OPTIONS'
+alias ll='ls $LS_OPTIONS -la'
+alias grep='grep --color=auto'
+# The bot: PID 1 in /app; its two logs (console output / raw protocol); health.
+alias botlog='less +F /app/bot_*.log'
+alias cmdlog='less +F /app/commands_*.log'
+alias bothealth='curl -s localhost:8080/health; echo'
+
+PS1='\[\e[1;32m\]lavabot\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+cd /app 2>/dev/null

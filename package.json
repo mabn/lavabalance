@@ -1,0 +1,41 @@
+{
+  "name": "lavabalance",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Custom autobalance bot for the Beyond All Reason lobby (Teiserver, legacy Spring protocol) running as a Cloudflare Worker + Durable Object.",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy && echo 'Deployed. The cron restarts the bot within 5 min; check /bot/status, or once the rollout has settled force it with: pnpm run bot:kick'",
+    "bot:kick": "curl -fsS --retry 6 --retry-delay 10 -X POST \"${BOT_CONTROL_URL:-https://lavabalance.fogofwar.dev}/bot/restart\" -H \"authorization: Bearer $CONTROL_TOKEN\" || { echo; echo \"bot:kick FAILED — the Worker deployed but the bot was not restarted. Export CONTROL_TOKEN and run: pnpm run bot:kick\"; exit 1; }",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bot": "tsx src/bot/bot.ts",
+    "lavaos:scrape": "tsx tools/lavaos/scrape.ts",
+    "lavaos:los": "tsx tools/lavaos/los.ts",
+    "lavaos:upload": "tsx tools/lavaos/upload.ts",
+    "lavaos:backfill-ranks": "tsx tools/lavaos/backfill-ranks.ts",
+    "lavaos:backfill-start-metal": "tsx tools/lavaos/backfill-start-metal.ts",
+    "connect-test": "tsx tools/connect-test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9",
+    "wrangler": "^4.129.0"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.7",
+    "hono": "^4.12.27",
+    "jose": "^6.2.12"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

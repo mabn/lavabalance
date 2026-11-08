@@ -1,0 +1,13 @@
+node_modules/
+dist/
+# lavaos scraped replay data + generated ratings (tools/lavaos)
+data*/
+.wrangler/
+.dev.vars
+*.log
+# but keep the checked-in test fixtures (the example replay log)
+!test/fixtures/*.log
+.env
+/log
+/log.x.txt
+.idea

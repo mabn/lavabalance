@@ -1,0 +1,28 @@
+S TASSERVER 0.38-33-ga5f3b28 * 8201 0
+c LOGIN huk123 <redacted> 0 * lavabalance	1234567890 0123456789abcdef	b sp
+S ACCEPTED huk123
+S MOTD Welcome to Teiserver
+S BATTLEOPENED 7294 0 0 Host[EU8][020] 203.0.113.10 53220 16 0 0 -590370561 spring	2025.06.24	Supreme Isthmus v2.1	LAVA SUPREME - T3 ECO | 8v8 | Unranked	Beyond All Reason test-30495-8e5184b
+S UPDATEBATTLEINFO 7294 1 0 -590370561 Supreme Isthmus v2.1
+S BATTLEOPENED 7322 0 0 Host[US2][001] 203.0.113.20 53201 16 0 0 1921126716 spring	2025.06.24	Riverdale Remake 2.1	PlayerE - Private Battle	Beyond All Reason test-30495-8e5184b
+S JOINEDBATTLE 7322 PlayerE
+c JOINBATTLE 7294 0 scriptpw
+S JOINEDBATTLE 7294 huk123 120974236
+S JOINEDBATTLE 7294 PlayerA
+S JOINEDBATTLE 7294 PlayerB
+S JOINEDBATTLE 7294 PlayerC
+S JOINEDBATTLE 7294 PlayerD
+c MYBATTLESTATUS 4194306 16777215
+S CLIENTBATTLESTATUS PlayerA 4195398 14392484
+S CLIENTBATTLESTATUS PlayerB 4195402 5272254
+S CLIENTBATTLESTATUS PlayerC 20972562 6457113
+S CLIENTBATTLESTATUS PlayerD 4194306 2859044
+S CLIENTSTATUS PlayerA 13
+S CLIENTSTATUS PlayerB 17
+S CLIENTSTATUS PlayerC 9
+S CLIENTSTATUS Host[EU8][020] 65
+S SETSCRIPTTAGS game/players/playera/skill=[30.1]	game/players/PlayerB/skill=[22.4]	game/players/PlayerC/skill=[18.7]	game/players/playera/skilluncertainty=3.1	game/modoptions/allowpausegameplay=1
+S SAIDBATTLEEX Host[EU8][020] * BarManager|{"BattleStateChanged": {"locked": "unlocked", "autoBalance": "advanced", "teamSize": "8", "preset": "team", "boss": "PlayerC"}}
+S LEFTBATTLE 7294 PlayerD
+S s.battle.update_lobby_title 7294	Supreme LAVA | 8v8 | Unranked
+S PING

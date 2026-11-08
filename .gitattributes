@@ -1,0 +1,4 @@
+# Files that end up inside the container image must keep LF endings: a CRLF
+# checkout breaks the /bin/sh wrapper's shebang (and bash rc files).
+container/* text eol=lf
+Dockerfile text eol=lf

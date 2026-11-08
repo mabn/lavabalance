@@ -1,0 +1,9 @@
+#!/bin/bash
+# Installed as /bin/sh in the bot image. The platform's SSH server execs /bin/sh
+# for a session (`echo $0` → /bin/sh), so: an interactive session with no args
+# becomes a real bash reading /root/.bashrc (prompt, colours, aliases), and
+# everything else (`sh -c …`, scripts) is handed to bash unchanged.
+if [ $# -eq 0 ] && [ -t 0 ]; then
+  exec /bin/bash --rcfile /root/.bashrc -i
+fi
+exec /bin/bash "$@"
