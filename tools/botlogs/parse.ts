@@ -2,12 +2,15 @@
 // API's container events into one structured record per log line. No node:*
 // imports, so the unit tests (Node pool) can import it.
 //
-// The bot's stdout reaches the "containers" dataset in three shapes:
-//   • a JSON line from logEvent/status/logError (src/bot/bot.ts) — Cloudflare
-//     parses it, so `source` holds the fields themselves ({ts, level, msg, …});
-//   • a chat line from `chat()` — `<ISO> [KIND[ where]] <from> text`;
+// The bot now writes every stdout line as one JSON object (src/bot/bot.ts:
+// logEvent, and the console wrapper for everything else), which Cloudflare
+// parses, so `source` holds the fields themselves ({ts, level, msg, …}); chat
+// lines carry `kind: "chat"` and their channel. Those are passed through as-is.
+//
+// Older logs (before that change) still hold text lines, which are parsed:
+//   • a chat line from the old `chat()` — `<ISO> [CMD[ where]] <from> text`,
 //     classified by `channel` (see ChatChannel);
-//   • anything else printed plainly (roster tables, matchup lines) — `message`.
+//   • anything else printed plainly (roster tables, matchup lines).
 
 /** One event as `POST …/workers/observability/telemetry/query` returns it (the parts we read). */
 export interface ObservabilityEvent {
@@ -40,22 +43,25 @@ interface Common {
  */
 export type ChatChannel = "game" | "lobby" | "whisper" | "channel";
 
-export type BotLogRecord =
-  | (Common & { kind: "event"; msg: string; [field: string]: unknown })
-  | (Common & {
+export type ChatRecord = Common & {
       kind: "chat";
       channel: ChatChannel;
-      chat: string;
+      /** The protocol command it arrived as (SAIDBATTLE, SAIDPRIVATE, …; SAYPRIVATE = the bot's own whisper). */
+      cmd: string;
       where?: string;
       direction?: "in" | "out";
       from: string;
       to?: string;
       via?: string;
       text: string;
-    })
+    };
+
+export type BotLogRecord =
+  | (Common & { kind: "event"; msg: string; [field: string]: unknown })
+  | ChatRecord
   | (Common & { kind: "line"; text: string });
 
-// `chat()` in bot.ts: `${stamp()} [${kind}${where ? ` ${where}` : ""}] <${from}> ${message}`
+// The old `chat()` in bot.ts: `${stamp()} [${kind}${where ? ` ${where}` : ""}] <${from}> ${message}`
 const CHAT_RE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) \[(\S+)(?: ([^\]]+))?\] <([^>]*)> ?([\s\S]*)$/;
 
 /** The container's syslog priority → a level: stderr lines arrive with a higher severity than stdout's. */
@@ -78,15 +84,15 @@ export function parseEvent(e: ObservabilityEvent): BotLogRecord {
   if (e.$metadata?.id) common.id = e.$metadata.id;
 
   if (typeof src.msg === "string") {
-    const { $cf: _cf, ts, level, msg, ...fields } = src;
-    return {
+    const { $cf: _cf, ts, level, msg, kind, ...fields } = src;
+    const lifted = {
       ...common,
       ...(typeof ts === "string" ? { ts } : {}),
       ...(typeof level === "string" ? { level } : {}),
-      kind: "event",
-      msg,
-      ...fields,
     };
+    // A chat event from the bot: already structured, only typed here.
+    if (kind === "chat") return { ...lifted, kind: "chat", ...(fields as Omit<ChatRecord, keyof Common | "kind">) };
+    return { ...lifted, kind: "event", msg, ...fields };
   }
 
   const text =
@@ -98,7 +104,7 @@ export function parseEvent(e: ObservabilityEvent): BotLogRecord {
   const m = CHAT_RE.exec(text);
   if (m) {
     const [, ts, chat, where, from, body] = m;
-    const base = { ...common, ts: ts!, kind: "chat" as const, chat: chat!, ...(where ? { where } : {}) };
+    const base = { ...common, ts: ts!, kind: "chat" as const, cmd: chat!, ...(where ? { where } : {}) };
     if (chat === "SAIDPRIVATE" || chat === "SAIDPRIVATEEX") {
       return { ...base, channel: "whisper", direction: "in", from: from!, text: body! };
     }

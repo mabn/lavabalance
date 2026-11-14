@@ -170,11 +170,22 @@ const botLog = new DailyLog("bot");
 // "→ teiserver …" tracing) land in the file too, not just this file's calls. The
 // original methods still run, so stdout/stderr — what the container platform
 // captures — is unchanged.
+//
+// Every line is ONE JSON object (`{ts, level, msg, …}`): logEvent already writes
+// one, and anything else printed here or by the shared modules (roster tables,
+// tracker notes, tracing) is wrapped into `{ts, level, msg}` on the way out, so
+// the container logs never need a text parser (tools/botlogs reads them).
+const asJsonLine = (level: "log" | "warn" | "error", args: unknown[]): string => {
+  const text = format(...args);
+  if (args.length === 1 && typeof args[0] === "string" && text.startsWith('{"ts":')) return text;
+  return JSON.stringify({ ts: new Date().toISOString(), level: level === "log" ? "info" : level, msg: text });
+};
 for (const level of ["log", "warn", "error"] as const) {
   const original = console[level].bind(console);
   console[level] = (...args: unknown[]) => {
-    original(...args);
-    botLog.write(format(...args) + "\n");
+    const line = asJsonLine(level, args);
+    original(line);
+    botLog.write(line + "\n");
   };
 }
 
@@ -496,8 +507,43 @@ function logError(context: string, e: unknown): void {
 function fileLog(dir: "→" | "←", line: string): void {
   commandsLog.write(`${stamp()} ${dir} ${line}\n`);
 }
-const chat = (kind: string, from: string, message: string, where?: string) =>
-  console.log(`${stamp()} [${kind}${where ? ` ${where}` : ""}] <${from}> ${message}`);
+/**
+ * Where a chat line was said (the `channel` field of a chat event):
+ *   game    — in-game chat, relayed into the lobby by the founder as
+ *             `SAIDBATTLE <founder> <player> text` (`via` = the founder);
+ *   lobby   — the battle lobby's own chat and announcements;
+ *   whisper — a private message to (`direction: "in"`) or from (`"out"`, `to`) the bot;
+ *   channel — a chat room (`where` = `#name`).
+ */
+type ChatChannel = "game" | "lobby" | "whisper" | "channel";
+
+/** One chat line as a structured event (`kind: "chat"`), read by tools/botlogs. */
+function chat(cmd: string, from: string, message: string, opts: { where?: string; to?: string } = {}): void {
+  let channel: ChatChannel;
+  const fields: Record<string, unknown> = {};
+  if (cmd === "SAYPRIVATE") {
+    channel = "whisper";
+    fields.direction = "out";
+    fields.to = opts.to;
+  } else if (cmd === "SAIDPRIVATE" || cmd === "SAIDPRIVATEEX") {
+    channel = "whisper";
+    fields.direction = "in";
+  } else if (cmd === "SAID" || cmd === "SAIDEX") {
+    channel = "channel";
+    fields.where = opts.where;
+  } else {
+    channel = "lobby";
+    const relay = cmd === "SAIDBATTLE" && isFounder(from) ? /^<(\S+)> ([\s\S]*)$/.exec(message) : null;
+    if (relay) {
+      channel = "game";
+      fields.via = from;
+      from = relay[1]!;
+      message = relay[2]!;
+    }
+  }
+  const head = channel === "whisper" && fields.direction === "out" ? `${from} → ${opts.to}` : from;
+  logEvent("info", `[${channel}] <${head}> ${message}`, { kind: "chat", channel, cmd, from, ...fields, text: message });
+}
 
 // --- Chat parsing ---
 
@@ -515,7 +561,7 @@ function handleChat(m: ParsedMessage): boolean {
   switch (m.cmd) {
     case "SAID":
     case "SAIDEX":
-      chat(m.cmd, m.words[1] ?? "?", trailingText(m, 2), `#${m.words[0] ?? "?"}`);
+      chat(m.cmd, m.words[1] ?? "?", trailingText(m, 2), { where: `#${m.words[0] ?? "?"}` });
       return true;
     case "SAIDPRIVATE": {
       const from = m.words[0] ?? "?";
@@ -2942,7 +2988,7 @@ function send(line: string): void {
   // Our own whispers, so stdout (the container logs) holds both sides of a
   // private conversation: incoming ones are logged as SAIDPRIVATE by handleChat.
   const pm = /^SAYPRIVATE (\S+) ([\s\S]*)$/.exec(line);
-  if (pm) chat("SAYPRIVATE", username, pm[2]!, `to ${pm[1]}`);
+  if (pm) chat("SAYPRIVATE", username, pm[2]!, { to: pm[1] });
 }
 
 function handleLine(line: string): void {

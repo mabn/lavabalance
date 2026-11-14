@@ -38,7 +38,7 @@ describe("parseEvent", () => {
       source: { message: "2026-11-14T00:14:00.313Z [SAIDBATTLE] <Rekky_Eccy> DAgnir you playing?" },
       $containers: ctr("2"),
     });
-    expect(direct).toMatchObject({ kind: "chat", channel: "lobby", chat: "SAIDBATTLE", from: "Rekky_Eccy", text: "DAgnir you playing?", ts: "2026-11-14T00:14:00.313Z" });
+    expect(direct).toMatchObject({ kind: "chat", channel: "lobby", cmd: "SAIDBATTLE", from: "Rekky_Eccy", text: "DAgnir you playing?", ts: "2026-11-14T00:14:00.313Z" });
     expect(direct).not.toHaveProperty("via");
 
     const relayed = parseEvent({
@@ -51,7 +51,7 @@ describe("parseEvent", () => {
       timestamp: 1,
       source: { message: "2026-11-14T00:09:10.476Z [SAIDBATTLEEX] <Host[EU2][005]> * Awaiting following vote(s): a,b" },
     });
-    expect(announce).toMatchObject({ channel: "lobby", chat: "SAIDBATTLEEX", from: "Host[EU2][005]", text: "* Awaiting following vote(s): a,b" });
+    expect(announce).toMatchObject({ channel: "lobby", cmd: "SAIDBATTLEEX", from: "Host[EU2][005]", text: "* Awaiting following vote(s): a,b" });
 
     const inbound = parseEvent({ timestamp: 1, source: { message: "2026-11-14T00:00:00.000Z [SAIDPRIVATE] <huk123> .info" } });
     expect(inbound).toMatchObject({ channel: "whisper", direction: "in", from: "huk123", text: ".info" });
@@ -62,6 +62,35 @@ describe("parseEvent", () => {
 
     const room = parseEvent({ timestamp: 1, source: { message: "2026-11-14T00:00:00.000Z [SAID #main] <someone> hi" } });
     expect(room).toMatchObject({ channel: "channel", where: "#main", from: "someone", text: "hi" });
+  });
+
+  it("passes the bot's structured chat events through as chat records", () => {
+    const r = parseEvent({
+      timestamp: 1,
+      source: {
+        ts: "2026-11-14T01:00:00.000Z",
+        level: "info",
+        msg: "[game] <henk1987> gg",
+        kind: "chat",
+        channel: "game",
+        cmd: "SAIDBATTLE",
+        from: "henk1987",
+        via: "Host[EU2][005]",
+        text: "gg",
+      },
+      $containers: ctr("4"),
+    });
+    expect(r).toEqual({
+      ts: "2026-11-14T01:00:00.000Z",
+      level: "info",
+      container: "0a538be3b1d6",
+      kind: "chat",
+      channel: "game",
+      cmd: "SAIDBATTLE",
+      from: "henk1987",
+      via: "Host[EU2][005]",
+      text: "gg",
+    });
   });
 
   it("keeps anything else as a plain line, levelled by the syslog priority", () => {
