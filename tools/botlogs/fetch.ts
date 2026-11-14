@@ -6,10 +6,9 @@
 //
 // `wrangler tail` never shows container stdout; the dashboard's Logs view and
 // this API do (dataset "containers"). Read-only. Credentials: CLOUDFLARE_API_TOKEN
-// (Workers Observability read + Containers read) if set, else whatever wrangler
-// is logged in with (`wrangler login`; asked via `wrangler auth token --json`,
-// which also refreshes an expired OAuth token). The account is
-// CLOUDFLARE_ACCOUNT_ID, or the credentials' only account.
+// (Workers Observability read + Containers read) if set, else the `cf` CLI's
+// login (`cf auth login`; the requests then go through `cf` itself). The
+// account is --account / CLOUDFLARE_ACCOUNT_ID, or the login's only account.
 //
 // Output: one record per line, oldest first, shaped by tools/botlogs/parse.ts —
 //   {ts, level, kind: "event", msg, …fields}   logEvent / status / logError lines
@@ -19,12 +18,13 @@
 //   {ts, level, kind: "line", text}            everything else printed plainly
 // each with `container` (short instance id; a change = a restart) and `id`.
 
-import { parseArgs } from "node:util";
+import { parseArgs, promisify } from "node:util";
 import { writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { toRecords, type ObservabilityEvent } from "./parse";
 
 const API = "https://api.cloudflare.com/client/v4";
+const execFileAsync = promisify(execFile);
 /** The query endpoint's own cap on `limit`. */
 const PAGE_LIMIT = 2000;
 /** Below this a window that still overflows is not split further. */
@@ -62,55 +62,33 @@ Options:
   -o, --out FILE  write to FILE instead of stdout
 
 Auth: CLOUDFLARE_API_TOKEN (Workers Observability read + Containers read) if set,
-else wrangler's own login (run \`pnpm exec wrangler login\` once).`);
+else the cf CLI's login (\`cf auth login\`; requests then run through cf).`);
   process.exit(0);
 }
 
-/** Request headers that authenticate us: the env token, else wrangler's login. */
-const authHeaders = resolveAuth();
-
-function resolveAuth(): Record<string, string> {
-  const envToken = process.env.CLOUDFLARE_API_TOKEN;
-  if (envToken) return { authorization: `Bearer ${envToken}` };
-  let out: string;
-  try {
-    // `wrangler auth token` reads CLOUDFLARE_API_KEY/EMAIL too, and otherwise
-    // the OAuth login, refreshing it when expired.
-    out = execFileSync("wrangler", ["auth", "token", "--json"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    });
-  } catch (e) {
-    // wrangler's stderr: proxy/config warnings, the error itself, a log-file note.
-    const why = ((e as { stderr?: string }).stderr ?? "")
-      .replace(/\x1b\[[0-9;]*m/g, "")
-      .split("\n")
-      .map((l) => l.trim())
-      .find((l) => l && !/WARNING|Logs were written/.test(l));
-    fail(`no CLOUDFLARE_API_TOKEN and wrangler has no usable login (run \`pnpm exec wrangler login\`)${why ? `: ${why}` : ""}`);
-  }
-  const json = out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1);
-  let creds: { type?: string; token?: string; key?: string; email?: string };
-  try {
-    creds = JSON.parse(json);
-  } catch {
-    fail(`could not read \`wrangler auth token --json\` output: ${out.slice(0, 200)}`);
-  }
-  if (creds.token) return { authorization: `Bearer ${creds.token}` };
-  if (creds.key && creds.email) return { "x-auth-key": creds.key, "x-auth-email": creds.email };
-  fail(`\`wrangler auth token --json\` returned no credentials (type ${creds.type ?? "?"})`);
-}
+/**
+ * How requests reach the API: with CLOUDFLARE_API_TOKEN set, plain fetch with
+ * that token; otherwise through the `cf` CLI (`cf auth login`), which signs
+ * each call with its own OAuth profile (the one bound to this directory, or
+ * --profile / CLOUDFLARE_AUTH_PROFILE) and refreshes it when expired. `cf`
+ * has no command that prints its token, so its API commands do the requests.
+ */
+const envToken = process.env.CLOUDFLARE_API_TOKEN;
 
 function fail(msg: string): never {
   console.error(`bot:logs: ${msg}`);
   process.exit(1);
 }
 
+/** The three requests this tool makes, by API path. */
 async function cf<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  return envToken ? viaFetch<T>(method, path, body) : viaCli<T>(method, path, body);
+}
+
+async function viaFetch<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method,
-    headers: { ...authHeaders, ...(body ? { "content-type": "application/json" } : {}) },
+    headers: { authorization: `Bearer ${envToken}`, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -125,6 +103,46 @@ async function cf<T>(method: "GET" | "POST", path: string, body?: unknown): Prom
     throw new Error(`cloudflare ${method} ${path} returned ${res.status}: ${why}`);
   }
   return json.result as T;
+}
+
+/** The same request as a `cf` command; it prints the response's `result` as JSON. */
+async function viaCli<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  let account: string | undefined;
+  let argv: string[];
+  let m: RegExpExecArray | null;
+  if (method === "GET" && path === "/accounts") argv = ["accounts", "list"];
+  else if (method === "GET" && (m = /^\/accounts\/([^/]+)\/containers\/applications$/.exec(path))) {
+    account = m[1];
+    argv = ["containers", "applications", "list"];
+  } else if (method === "POST" && (m = /^\/accounts\/([^/]+)\/workers\/observability\/telemetry\/query$/.exec(path))) {
+    account = m[1];
+    const q = body as { queryId: string; timeframe: { from: number; to: number } };
+    // The three flags are required even when --body carries everything.
+    argv = ["o11y", "telemetry", "query", "--query-id", q.queryId,
+      "--timeframe-from", String(q.timeframe.from), "--timeframe-to", String(q.timeframe.to),
+      "--body", JSON.stringify(body)];
+  } else throw new Error(`no cf command for ${method} ${path}`);
+
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("cf", argv, {
+      encoding: "utf8",
+      maxBuffer: 1 << 30,
+      // cf picks the account from CLOUDFLARE_ACCOUNT_ID; NO_COLOR keeps the JSON plain.
+      env: { ...process.env, NO_COLOR: "1", ...(account ? { CLOUDFLARE_ACCOUNT_ID: account } : {}) },
+      shell: process.platform === "win32",
+    }));
+  } catch (e) {
+    const err = e as { code?: string; stderr?: string; message?: string };
+    if (err.code === "ENOENT") fail("CLOUDFLARE_API_TOKEN is not set and the `cf` CLI is not on PATH (npm i -g cf, then `cf auth login`)");
+    const why = (err.stderr ?? err.message ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim().split("\n").slice(-3).join(" | ");
+    throw new Error(`cf ${argv.slice(0, 3).join(" ")} failed: ${why}`);
+  }
+  try {
+    return JSON.parse(stdout) as T;
+  } catch {
+    throw new Error(`cf ${argv.slice(0, 3).join(" ")}: unreadable output: ${stdout.slice(0, 200)}`);
+  }
 }
 
 async function resolveAccount(): Promise<string> {
