@@ -38,23 +38,30 @@ describe("parseEvent", () => {
       source: { message: "2026-11-14T00:14:00.313Z [SAIDBATTLE] <Rekky_Eccy> DAgnir you playing?" },
       $containers: ctr("2"),
     });
-    expect(direct).toMatchObject({ kind: "chat", chat: "SAIDBATTLE", from: "Rekky_Eccy", text: "DAgnir you playing?", ts: "2026-11-14T00:14:00.313Z" });
+    expect(direct).toMatchObject({ kind: "chat", channel: "lobby", chat: "SAIDBATTLE", from: "Rekky_Eccy", text: "DAgnir you playing?", ts: "2026-11-14T00:14:00.313Z" });
     expect(direct).not.toHaveProperty("via");
 
     const relayed = parseEvent({
       timestamp: 1,
       source: { message: "2026-11-13T22:14:23.234Z [SAIDBATTLE] <Host[EU2][005]> <henk1987> !vote n" },
     });
-    expect(relayed).toMatchObject({ kind: "chat", from: "henk1987", via: "Host[EU2][005]", text: "!vote n" });
+    expect(relayed).toMatchObject({ kind: "chat", channel: "game", from: "henk1987", via: "Host[EU2][005]", text: "!vote n" });
 
     const announce = parseEvent({
       timestamp: 1,
       source: { message: "2026-11-14T00:09:10.476Z [SAIDBATTLEEX] <Host[EU2][005]> * Awaiting following vote(s): a,b" },
     });
-    expect(announce).toMatchObject({ chat: "SAIDBATTLEEX", from: "Host[EU2][005]", text: "* Awaiting following vote(s): a,b" });
+    expect(announce).toMatchObject({ channel: "lobby", chat: "SAIDBATTLEEX", from: "Host[EU2][005]", text: "* Awaiting following vote(s): a,b" });
 
-    const whisper = parseEvent({ timestamp: 1, source: { message: "2026-11-14T00:00:00.000Z [SAIDPRIVATE to huk123] <lavabalance> hi" } });
-    expect(whisper).toMatchObject({ chat: "SAIDPRIVATE", where: "to huk123", from: "lavabalance", text: "hi" });
+    const inbound = parseEvent({ timestamp: 1, source: { message: "2026-11-14T00:00:00.000Z [SAIDPRIVATE] <huk123> .info" } });
+    expect(inbound).toMatchObject({ channel: "whisper", direction: "in", from: "huk123", text: ".info" });
+    expect(inbound).not.toHaveProperty("to");
+
+    const outbound = parseEvent({ timestamp: 1, source: { message: "2026-11-14T00:00:01.000Z [SAYPRIVATE to huk123] <lavabalance> battle 275" } });
+    expect(outbound).toMatchObject({ channel: "whisper", direction: "out", from: "lavabalance", to: "huk123", text: "battle 275" });
+
+    const room = parseEvent({ timestamp: 1, source: { message: "2026-11-14T00:00:00.000Z [SAID #main] <someone> hi" } });
+    expect(room).toMatchObject({ channel: "channel", where: "#main", from: "someone", text: "hi" });
   });
 
   it("keeps anything else as a plain line, levelled by the syslog priority", () => {

@@ -6,6 +6,7 @@
 //   • a JSON line from logEvent/status/logError (src/bot/bot.ts) — Cloudflare
 //     parses it, so `source` holds the fields themselves ({ts, level, msg, …});
 //   • a chat line from `chat()` — `<ISO> [KIND[ where]] <from> text`;
+//     classified by `channel` (see ChatChannel);
 //   • anything else printed plainly (roster tables, matchup lines) — `message`.
 
 /** One event as `POST …/workers/observability/telemetry/query` returns it (the parts we read). */
@@ -26,9 +27,32 @@ interface Common {
   id?: string;
 }
 
+/**
+ * Where a chat line was said:
+ *   • "game"    — in-game chat, relayed into the lobby by the host
+ *                 (`SAIDBATTLE <host> <player> text`; `via` = the host);
+ *   • "lobby"   — the battle lobby's own chat (SAIDBATTLE / SAIDBATTLEEX,
+ *                 host announcements and the bot's own lines included);
+ *   • "whisper" — a private message to or from the bot (`direction` "in" /
+ *                 "out"; `to` set on outgoing ones). The host's PMs (SPADS
+ *                 replies, the bot's `!fb` commands to it) are whispers too;
+ *   • "channel" — a chat room (`#name` in `where`).
+ */
+export type ChatChannel = "game" | "lobby" | "whisper" | "channel";
+
 export type BotLogRecord =
   | (Common & { kind: "event"; msg: string; [field: string]: unknown })
-  | (Common & { kind: "chat"; chat: string; where?: string; from: string; via?: string; text: string })
+  | (Common & {
+      kind: "chat";
+      channel: ChatChannel;
+      chat: string;
+      where?: string;
+      direction?: "in" | "out";
+      from: string;
+      to?: string;
+      via?: string;
+      text: string;
+    })
   | (Common & { kind: "line"; text: string });
 
 // `chat()` in bot.ts: `${stamp()} [${kind}${where ? ` ${where}` : ""}] <${from}> ${message}`
@@ -74,16 +98,20 @@ export function parseEvent(e: ObservabilityEvent): BotLogRecord {
   const m = CHAT_RE.exec(text);
   if (m) {
     const [, ts, chat, where, from, body] = m;
-    // In-game chat reaches the lobby relayed by the host: `SAIDBATTLE <host> "<player> text"`.
+    const base = { ...common, ts: ts!, kind: "chat" as const, chat: chat!, ...(where ? { where } : {}) };
+    if (chat === "SAIDPRIVATE" || chat === "SAIDPRIVATEEX") {
+      return { ...base, channel: "whisper", direction: "in", from: from!, text: body! };
+    }
+    if (chat === "SAYPRIVATE") {
+      // bot.ts logs its own whispers as `[SAYPRIVATE to <name>] <bot> text`.
+      const to = where?.startsWith("to ") ? where.slice(3) : undefined;
+      return { ...base, channel: "whisper", direction: "out", from: from!, ...(to ? { to } : {}), text: body! };
+    }
+    if (chat === "SAID" || chat === "SAIDEX") return { ...base, channel: "channel", from: from!, text: body! };
+    // In-game chat reaches the lobby relayed by the host: `SAIDBATTLE <host> <player> text`.
     const relayed = chat === "SAIDBATTLE" ? RELAY_RE.exec(body!) : null;
-    return {
-      ...common,
-      ts: ts!,
-      kind: "chat",
-      chat: chat!,
-      ...(where ? { where } : {}),
-      ...(relayed ? { from: relayed[1]!, via: from!, text: relayed[2]! } : { from: from!, text: body! }),
-    };
+    if (relayed) return { ...base, channel: "game", from: relayed[1]!, via: from!, text: relayed[2]! };
+    return { ...base, channel: "lobby", from: from!, text: body! };
   }
   return { ...common, kind: "line", text };
 }
