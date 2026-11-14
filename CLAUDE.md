@@ -67,13 +67,14 @@ pnpm run bot              # bot locally; credentials in .env (see .env.example)
 pnpm run deploy           # Worker + container image (needs Docker)
 pnpm exec wrangler deploy --containers-rollout=none   # Worker only
 pnpm run bot:kick         # restart bot now (needs $CONTROL_TOKEN)
+pnpm run bot:logs -- --hours 3 > logs.json   # bot container stdout as structured JSON (CLOUDFLARE_API_TOKEN, else your `cf auth login`)
 ```
 
 ## NOTES
 - **Deploy scope.** Bot code changes need the full deploy (container rebuild); Worker-only leaves the old bot image running. The bot reads secrets/vars only at container start: restart it after `wrangler secret put`.
 - A secret can't be created while a var of the same name is deployed (code 10053): deploy the var removal first.
 - Cron (`*/5`) restarts the bot after any non-fatal exit; exit code 42 = fatal (bad login/config), stops retries until `POST /bot/start`.
-- Container stdout is not in `wrangler tail`; it's in the dashboard Logs.
+- Container stdout is not in `wrangler tail`; it's in the dashboard Logs and the Workers Observability API (dataset `containers`), which `pnpm run bot:logs` reads (`tools/botlogs/`; `--hours`, `--since/--until`, `--ndjson`, `-o`). The bot writes EVERY stdout line as one JSON object: `logEvent` for its own events, `chat()` for chat (`kind: "chat"`, `channel` = `game` (in-game, `via` = the relaying host) / `lobby` / `whisper` (`direction` in/out, `to`; the bot's own whispers included) / `channel`, plus `cmd`, `from`, `text`), and the console wrapper turns anything else into `{ts, level, msg}`. Keep new output in that shape. `bot:logs` passes these through and still parses the older text lines.
 - `wrangler deploy --dry-run` still needs Docker unless `--containers-rollout=none`.
 - Some sandboxes block outbound TCP :8200; test the bot from a normal network.
 - The Dispatcher's `src=proxy` view is fed only by `ingest()` (tests); empty in production.
