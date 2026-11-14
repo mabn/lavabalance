@@ -11,8 +11,9 @@
 //
 // Output: one record per line, oldest first, shaped by tools/botlogs/parse.ts —
 //   {ts, level, kind: "event", msg, …fields}   logEvent / status / logError lines
-//   {ts, level, kind: "chat", chat, where?, from, via?, text}   SAID* chat lines
-//                                              (via = the host relaying in-game chat)
+//   {ts, level, kind: "chat", channel, chat, from, text, …}   chat lines, channel =
+//       "game" (in-game, `via` = relaying host) | "lobby" | "whisper" (`direction`
+//       in/out, `to` on outgoing) | "channel" (`where` = #room)
 //   {ts, level, kind: "line", text}            everything else printed plainly
 // each with `container` (short instance id; a change = a restart) and `id`.
 

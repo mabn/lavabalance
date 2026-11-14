@@ -2939,6 +2939,10 @@ function send(line: string): void {
   fileLog("→", redact(line));
   track("client", line);
   sock?.write(line + "\n");
+  // Our own whispers, so stdout (the container logs) holds both sides of a
+  // private conversation: incoming ones are logged as SAIDPRIVATE by handleChat.
+  const pm = /^SAYPRIVATE (\S+) ([\s\S]*)$/.exec(line);
+  if (pm) chat("SAYPRIVATE", username, pm[2]!, `to ${pm[1]}`);
 }
 
 function handleLine(line: string): void {
