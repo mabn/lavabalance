@@ -67,7 +67,7 @@ pnpm run bot              # bot locally; credentials in .env (see .env.example)
 pnpm run deploy           # Worker + container image (needs Docker)
 pnpm exec wrangler deploy --containers-rollout=none   # Worker only
 pnpm run bot:kick         # restart bot now (needs $CONTROL_TOKEN)
-pnpm run bot:logs -- --hours 3 > logs.json   # bot container stdout as structured JSON (needs CLOUDFLARE_API_TOKEN)
+pnpm run bot:logs -- --hours 3 > logs.json   # bot container stdout as structured JSON (CLOUDFLARE_API_TOKEN, else your `wrangler login`)
 ```
 
 ## NOTES

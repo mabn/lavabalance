@@ -5,9 +5,11 @@
 //   pnpm run bot:logs -- --hours 24 --ndjson | jq 'select(.level == "error")'
 //
 // `wrangler tail` never shows container stdout; the dashboard's Logs view and
-// this API do (dataset "containers"). Read-only: needs CLOUDFLARE_API_TOKEN with
-// Workers Observability read (and Containers read, to find the application by
-// name). The account is CLOUDFLARE_ACCOUNT_ID, or the token's only account.
+// this API do (dataset "containers"). Read-only. Credentials: CLOUDFLARE_API_TOKEN
+// (Workers Observability read + Containers read) if set, else whatever wrangler
+// is logged in with (`wrangler login`; asked via `wrangler auth token --json`,
+// which also refreshes an expired OAuth token). The account is
+// CLOUDFLARE_ACCOUNT_ID, or the credentials' only account.
 //
 // Output: one record per line, oldest first, shaped by tools/botlogs/parse.ts —
 //   {ts, level, kind: "event", msg, …fields}   logEvent / status / logError lines
@@ -19,6 +21,7 @@
 
 import { parseArgs } from "node:util";
 import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { toRecords, type ObservabilityEvent } from "./parse";
 
 const API = "https://api.cloudflare.com/client/v4";
@@ -58,12 +61,46 @@ Options:
   --ndjson        one JSON object per line instead of a JSON array
   -o, --out FILE  write to FILE instead of stdout
 
-Env: CLOUDFLARE_API_TOKEN (Workers Observability read + Containers read).`);
+Auth: CLOUDFLARE_API_TOKEN (Workers Observability read + Containers read) if set,
+else wrangler's own login (run \`pnpm exec wrangler login\` once).`);
   process.exit(0);
 }
 
-const token = process.env.CLOUDFLARE_API_TOKEN;
-if (!token) fail("CLOUDFLARE_API_TOKEN is not set");
+/** Request headers that authenticate us: the env token, else wrangler's login. */
+const authHeaders = resolveAuth();
+
+function resolveAuth(): Record<string, string> {
+  const envToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (envToken) return { authorization: `Bearer ${envToken}` };
+  let out: string;
+  try {
+    // `wrangler auth token` reads CLOUDFLARE_API_KEY/EMAIL too, and otherwise
+    // the OAuth login, refreshing it when expired.
+    out = execFileSync("wrangler", ["auth", "token", "--json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+  } catch (e) {
+    // wrangler's stderr: proxy/config warnings, the error itself, a log-file note.
+    const why = ((e as { stderr?: string }).stderr ?? "")
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l && !/WARNING|Logs were written/.test(l));
+    fail(`no CLOUDFLARE_API_TOKEN and wrangler has no usable login (run \`pnpm exec wrangler login\`)${why ? `: ${why}` : ""}`);
+  }
+  const json = out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1);
+  let creds: { type?: string; token?: string; key?: string; email?: string };
+  try {
+    creds = JSON.parse(json);
+  } catch {
+    fail(`could not read \`wrangler auth token --json\` output: ${out.slice(0, 200)}`);
+  }
+  if (creds.token) return { authorization: `Bearer ${creds.token}` };
+  if (creds.key && creds.email) return { "x-auth-key": creds.key, "x-auth-email": creds.email };
+  fail(`\`wrangler auth token --json\` returned no credentials (type ${creds.type ?? "?"})`);
+}
 
 function fail(msg: string): never {
   console.error(`bot:logs: ${msg}`);
@@ -73,7 +110,7 @@ function fail(msg: string): never {
 async function cf<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+    headers: { ...authHeaders, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
