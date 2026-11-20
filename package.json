@@ -18,6 +18,7 @@
     "lavaos:upload": "tsx tools/lavaos/upload.ts",
     "lavaos:backfill-ranks": "tsx tools/lavaos/backfill-ranks.ts",
     "lavaos:backfill-start-metal": "tsx tools/lavaos/backfill-start-metal.ts",
+    "bot:logs": "tsx tools/botlogs/fetch.ts",
     "connect-test": "tsx tools/connect-test.ts"
   },
   "devDependencies": {
