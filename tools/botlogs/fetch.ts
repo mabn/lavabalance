@@ -1,8 +1,8 @@
 // Fetch the bot container's logs (its stdout) for the past N hours from the
 // Cloudflare Workers Observability API and print them as structured JSON.
 //
-//   pnpm run bot:logs -- --hours 3 > logs.json
-//   pnpm run bot:logs -- --hours 24 --ndjson | jq 'select(.level == "error")'
+//   pnpm -s run bot:logs -- --hours 3 > logs.json   (-s: no pnpm header in the file)
+//   pnpm -s run bot:logs -- --hours 24 --ndjson | jq 'select(.level == "error")'
 //
 // `wrangler tail` never shows container stdout; the dashboard's Logs view and
 // this API do (dataset "containers"). Read-only. Credentials: CLOUDFLARE_API_TOKEN
@@ -19,7 +19,8 @@
 // each with `container` (short instance id; a change = a restart) and `id`.
 
 import { parseArgs, promisify } from "node:util";
-import { writeFileSync } from "node:fs";
+import { createWriteStream, type WriteStream } from "node:fs";
+import { once } from "node:events";
 import { execFile } from "node:child_process";
 import { toRecords, type ObservabilityEvent } from "./parse";
 
@@ -27,6 +28,8 @@ const API = "https://api.cloudflare.com/client/v4";
 const execFileAsync = promisify(execFile);
 /** The query endpoint's own cap on `limit`. */
 const PAGE_LIMIT = 2000;
+/** Hour windows fetched in parallel. */
+const CONCURRENCY = 6;
 /** Below this a window that still overflows is not split further. */
 const MIN_WINDOW_MS = 1000;
 
@@ -220,19 +223,60 @@ async function main(): Promise<void> {
 
   // Hour-sized windows keep most queries under the page cap (the bot writes
   // ~500 lines an hour while a lobby is active); busier ones are split.
-  const events: ObservabilityEvent[] = [];
-  for (let start = from; start < to; start += 3600_000) {
-    events.push(...(await fetchRange(account, appId, start, Math.min(start + 3600_000 - 1, to))));
-  }
-  const records = toRecords(events);
+  const windows: [number, number][] = [];
+  for (let start = from; start < to; start += 3600_000) windows.push([start, Math.min(start + 3600_000 - 1, to)]);
 
-  const text = args.ndjson
-    ? records.map((r) => JSON.stringify(r)).join("\n") + (records.length ? "\n" : "")
-    : JSON.stringify(records, null, 2) + "\n";
+  // Output is streamed: each hour is written as soon as it and every earlier
+  // hour are in, so only the hours fetched out of order wait in memory.
+  const out = args.out ? createWriteStream(args.out) : process.stdout;
+  const write = (text: string) => (out.write(text) ? Promise.resolve() : once(out, "drain").then(() => {}));
+  let written = 0;
+  const emit = async (events: ObservabilityEvent[]) => {
+    for (const r of toRecords(events)) {
+      const json = args.ndjson ? JSON.stringify(r) : JSON.stringify(r, null, 2).replace(/^/gm, "  ");
+      await write(args.ndjson ? `${json}\n` : `${written ? ",\n" : "[\n"}${json}`);
+      written++;
+    }
+  };
+
+  // A few windows at a time: each query takes a second or more (more through
+  // `cf`, a process per call), so a week fetched one by one takes minutes.
+  const ready: (ObservabilityEvent[] | undefined)[] = new Array(windows.length);
+  let next = 0;
+  let flushed = 0;
+  let done = 0;
+  let flushing = Promise.resolve();
+  const progress = () => {
+    if (process.stderr.isTTY) process.stderr.write(`\rbot:logs: ${done}/${windows.length} hours, ${written} lines written`);
+  };
+  const flush = () =>
+    (flushing = flushing.then(async () => {
+      while (flushed < windows.length && ready[flushed]) {
+        const events = ready[flushed]!;
+        ready[flushed++] = undefined;
+        await emit(events);
+      }
+      progress();
+    }));
+  progress();
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, windows.length) }, async () => {
+      while (next < windows.length) {
+        const i = next++;
+        const [a, b] = windows[i]!;
+        ready[i] = await fetchRange(account, appId, a, b);
+        done++;
+        await flush();
+      }
+    }),
+  );
+  await flush();
+  if (!args.ndjson) await write(written ? "\n]\n" : "[]\n");
+  if (process.stderr.isTTY) process.stderr.write("\n");
   if (args.out) {
-    writeFileSync(args.out, text);
-    console.error(`bot:logs: ${records.length} lines → ${args.out}`);
-  } else process.stdout.write(text);
+    await new Promise<void>((resolve, reject) => (out as WriteStream).end((e?: Error | null) => (e ? reject(e) : resolve())));
+    console.error(`bot:logs: ${written} lines → ${args.out}`);
+  }
 }
 
 main().catch((e) => fail(e instanceof Error ? e.message : String(e)));
