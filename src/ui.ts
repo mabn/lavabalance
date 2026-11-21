@@ -50,7 +50,9 @@
 //     averages come from the API, never from averaging a blanked roster.
 //     Under the rosters, for a game barreplay has published, barreplay's own
 //     game summary (imported at view time from barreplay's deployment).
-//   • POLLS_HTML — GET /polls, /polls/:slug. One poll (src/polls.ts): question,
+//   • POLLS_HTML — GET /polls, /polls/:slug. /polls is the list (close date or
+//     Open, title, a one-line results summary, the visitor's own vote; a row
+//     opens the poll). /polls/:slug is one poll (src/polls.ts): question,
 //     a column per option with its picture, single choice, a prominent Vote
 //     button (logged-out voters go to /login and come back to a cast vote) and
 //     View results (overall bars + the split by rank tier; admins see voters).
@@ -789,6 +791,27 @@ const STYLES = /* css */ `
   .voters th { color: #7a828c; font-weight: 600; }
   .voters td a { color: #c7ccd1; text-decoration: none; font-weight: 600; }
   .voters td a:hover { color: #7fbaff; }
+  .poll-back { width: 100%; max-width: 1080px; font-size: 13px; color: #8a929c; text-decoration: none; margin-bottom: -6px; }
+  .poll-back:hover { color: #c7ccd1; }
+  .poll-list { width: 100%; max-width: 860px; background: #15181e; border: 1px solid #262b33; border-radius: 10px; overflow: hidden; }
+  .pl-row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; color: inherit; text-decoration: none; border-bottom: 1px solid #1f242c; }
+  .pl-row:last-child { border-bottom: 0; }
+  .pl-row:hover { background: #1a1e25; }
+  .pl-when { flex: 0 0 96px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+  .pl-state { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5cc274; }
+  .pl-state.closed { color: #e06c6c; }
+  .pl-date { color: #8a929c; }
+  .pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .pl-title { font-size: 15px; font-weight: 600; color: #f3f5f7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pl-res { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; color: #a8b0b9; }
+  .pl-bar { display: inline-flex; width: 80px; height: 6px; border-radius: 3px; overflow: hidden; background: #262b33; }
+  .pl-bar i { display: block; height: 100%; }
+  .pl-opt { display: inline-flex; align-items: center; gap: 5px; }
+  .pl-opt i { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+  .pl-opt b { color: var(--accent); }
+  .pl-total { color: #6b7480; }
+  .pl-you { color: #8a929c; }
+  .pl-go { color: #4a525c; font-size: 22px; }
   .poll-foot { width: 100%; max-width: 1080px; font-size: 12px; color: #6b7480; line-height: 1.5; }
   .lightbox {
     position: fixed; inset: 0; z-index: 50; background: rgba(5,6,8,.88); display: grid; place-items: center;
@@ -800,6 +823,9 @@ const STYLES = /* css */ `
   .lightbox figcaption b { color: var(--accent); }
   @media (max-width: 700px) {
     .pollpage { padding: 12px; }
+    .pl-row { gap: 10px; padding: 12px; }
+    .pl-when { flex-basis: 74px; }
+    .pl-title { white-space: normal; }
     .poll-head { padding: 18px 16px 4px; }
     .poll-head h2 { font-size: 21px; }
     .choices { padding: 14px 16px 4px; grid-template-columns: 1fr; }
@@ -5727,7 +5753,7 @@ ${sidebar("polls")}
 <div class="main">
 <header class="top">
   <h1>Polls</h1>
-  <span class="meta">one BAR account, one vote · you can change it any time</span>
+  <span class="meta" id="pollMeta">one BAR account, one vote</span>
 </header>
 <main id="root" class="pollpage"><div class="empty">loading…</div></main>
 </div>
@@ -5737,7 +5763,7 @@ ${sidebar("polls")}
 ${SHARED_JS}
 
 const root = document.getElementById("root");
-// /polls → the newest poll; /polls/<slug> → that one.
+// /polls → the list of polls; /polls/<slug> → that one.
 const slugFromUrl = decodeURIComponent((location.pathname.match(/^\\/polls\\/([^/]+)/) || [])[1] || "");
 // A pick saved by Vote before the login detour (cast on the way back).
 const PENDING_KEY = "pollPendingVote";
@@ -5803,6 +5829,7 @@ function render() {
   const p = state.poll;
   const open = p.open;
   root.innerHTML =
+    '<a class="poll-back" href="/polls">\u2190 All polls</a>' +
     '<article class="poll">' +
       '<div class="poll-head">' +
         '<div class="poll-kicker"><span class="state' + (open ? "" : " closed") + '">' + (open ? "Open" : "Closed") + "</span>" +
@@ -5811,7 +5838,7 @@ function render() {
           '<span>\\u00B7</span><span id="voteCount"></span></div>' +
         "<h2>" + esc(p.title) + "</h2>" +
         '<div class="poll-question">' + p.questionHtml + "</div>" +
-        '<p class="poll-hint">Pick one. ' + (open ? "You can change your vote until the poll closes." : "This poll no longer takes votes.") + "</p>" +
+        '<p class="poll-hint">' + (open ? "Pick one. You can change your vote until the poll closes." : "This poll is closed, voting is disabled.") + "</p>" +
       "</div>" +
       '<div class="choices" role="radiogroup" aria-label="' + esc(p.title) + '">' + p.options.map((o) => choiceCard(o, open)).join("") + "</div>" +
       '<div class="poll-actions">' +
@@ -5869,8 +5896,16 @@ function updateVoteButton() {
 
 function defaultStatus() {
   const s = document.getElementById("status");
-  if (!s || !state.poll.open) return;
+  if (!s) return;
   s.className = "poll-status";
+  if (!state.poll.open) {
+    // Closed: nothing to vote on, but a voter keeps seeing their own pick.
+    const o = state.myVote ? optionOf(state.myVote.choice) : null;
+    s.innerHTML = state.myVote
+      ? "You voted <b>" + esc(o ? o.label : state.myVote.choice) + "</b>."
+      : "This poll is closed.";
+    return;
+  }
   if (state.myVote) {
     const o = optionOf(state.myVote.choice);
     s.innerHTML = "You voted <b>" + esc(o ? o.label : state.myVote.choice) + '</b> <span class="ago">\\u00B7 ' +
@@ -6032,23 +6067,54 @@ function zoom(key) {
   document.body.appendChild(lb);
 }
 
+// /polls: one row per poll, newest first. Left: Open/Closed and the date;
+// middle: the title and, below it, the results on one compact line.
+function pollRow(p) {
+  const total = p.results.total;
+  const count = (o) => p.results.counts[o.key] || 0;
+  const when = '<span class="pl-state' + (p.open ? "" : " closed") + '">' + (p.open ? "Open" : "Closed") + "</span>" +
+    (p.closesAt ? '<span class="pl-date">' + (p.open ? "until " : "") + esc(fmtDay(p.closesAt)) + "</span>" : "");
+  const bar = '<span class="pl-bar">' + (total ? p.options.map((o) => count(o)
+    ? '<i style="width:' + pct(count(o), total) + "%;background:" + esc(o.color) + '"></i>' : "").join("") : "") + "</span>";
+  const nums = p.options.map((o) =>
+    '<span class="pl-opt" style="--accent:' + esc(o.color) + '"><i></i>' + esc(o.heading || o.label) +
+    " <b>" + pct(count(o), total) + "%</b></span>").join("");
+  const mine = p.myVote ? p.options.find((o) => o.key === p.myVote) : null;
+  const you = p.myVote ? '<span class="pl-you">\u2713 you voted ' + esc(mine ? (mine.heading || mine.label) : p.myVote) + "</span>" : "";
+  return '<a class="pl-row" href="/polls/' + encodeURIComponent(p.slug) + '">' +
+    '<span class="pl-when">' + when + "</span>" +
+    '<span class="pl-main"><span class="pl-title">' + esc(p.title) + "</span>" +
+      '<span class="pl-res">' + bar + nums +
+        '<span class="pl-total">' + total + (total === 1 ? " vote" : " votes") + "</span>" + you +
+      "</span></span>" +
+    '<span class="pl-go">\u203A</span></a>';
+}
+
+async function loadList() {
+  const r = await getJson("/api/polls");
+  if (!r.ok) {
+    root.innerHTML = '<div class="error">' + esc(r.body.error || "Could not load the polls.") + "</div>";
+    return;
+  }
+  const polls = r.body.polls || [];
+  root.innerHTML = polls.length
+    ? '<div class="poll-list">' + polls.map(pollRow).join("") + "</div>"
+    : '<div class="empty">No polls yet.</div>';
+}
+
 async function load() {
   try {
-    let slug = slugFromUrl;
-    if (!slug) {
-      const list = await getJson("/api/polls");
-      if (!list.ok || !list.body.polls || !list.body.polls.length) {
-        root.innerHTML = '<div class="empty">No polls right now.</div>';
-        return;
-      }
-      slug = list.body.polls[0].slug;
-    }
+    const slug = slugFromUrl;
+    if (!slug) return await loadList();
     const r = await getJson("/api/polls/" + encodeURIComponent(slug));
     if (!r.ok) {
       root.innerHTML = '<div class="error">' + esc(r.body.error || "Could not load the poll.") + "</div>";
       return;
     }
     state = r.body;
+    document.getElementById("pollMeta").textContent = state.poll.open
+      ? "one BAR account, one vote \u00B7 you can change it until the poll closes"
+      : "one BAR account, one vote \u00B7 this poll is closed";
     // The server knows who is logged in: keep the header's remembered user right.
     const known = storedAuthUser();
     if ((state.user ? state.user.userId : null) !== (known ? known.userId : null)) {

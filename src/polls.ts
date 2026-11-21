@@ -47,8 +47,9 @@ export interface PollDef {
 }
 
 /**
- * Every poll, newest first. /polls shows the first one; /polls/<slug> any of
- * them. Keep slugs stable: the stored votes are keyed on the slug's id.
+ * Every poll, newest first. /polls lists them, /polls/<slug> shows one.
+ * Keep slugs stable: the stored votes are keyed on the slug's id. A poll is
+ * closed by setting its closesAt.
  */
 export const POLLS: readonly PollDef[] = [
   {
@@ -57,6 +58,7 @@ export const POLLS: readonly PollDef[] = [
     questionHtml:
       "<p>Should we hide LOS values and change the ranking page to stop showing player rank?</p>",
     openedAt: "2026-11-01",
+    closesAt: "2026-11-21T21:00:00Z",
     ogImage: "/polls/do-you-want-los-hidden-og.png",
     options: [
       {

@@ -5,7 +5,7 @@
 // does (issue with ADMIN_OPEN, then redeem), as in auth.workers.test.ts.
 
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
 import { POLLS } from "../src/polls";
 
@@ -13,6 +13,10 @@ const BASE = "https://lavabalance.test";
 const JSON_HDR = { "content-type": "application/json" };
 const AS_ADMIN = { ADMIN_OPEN: "true" } as Partial<Env>;
 const SLUG = POLLS[0].slug;
+// The poll is closed in production; the voting tests reopen it (the worker
+// shares this module's POLLS) and afterAll puts the real close date back.
+const POLL = POLLS[0] as { closesAt?: string };
+const CLOSES_AT = POLL.closesAt;
 
 async function request(path: string, init?: RequestInit, extraEnv: Partial<Env> = {}) {
   const ctx = createExecutionContext();
@@ -71,12 +75,19 @@ async function vote(choice: unknown, cookie?: string, origin = BASE) {
 }
 
 describe("polls", () => {
+  beforeAll(() => { delete POLL.closesAt; });
+  afterAll(() => { POLL.closesAt = CLOSES_AT; });
+
   it("lists the polls and serves the pages", async () => {
-    const list = (await (await request("/api/polls")).json()) as { polls: { slug: string; open: boolean }[] };
-    expect(list.polls[0]).toMatchObject({ slug: SLUG, open: true });
+    const list = (await (await request("/api/polls")).json()) as {
+      polls: { slug: string; open: boolean; results: { total: number }; myVote: string | null }[];
+    };
+    expect(list.polls[0]).toMatchObject({ slug: SLUG, open: true, myVote: null });
+    expect(typeof list.polls[0].results.total).toBe("number");
+    // /polls is the list page now, not a redirect to the newest poll.
     const bare = await request("/polls");
-    expect(bare.status).toBe(302);
-    expect(bare.headers.get("location")).toBe(`/polls/${SLUG}`);
+    expect(bare.status).toBe(200);
+    expect(await bare.text()).toContain('id="root" class="pollpage"');
     const page = await request(`/polls/${SLUG}`);
     expect(page.status).toBe(200);
     const html = await page.text();
@@ -151,5 +162,19 @@ describe("polls", () => {
     expect(total).toBeGreaterThan(0);
     expect((await request("/api/reset?confirm=true", { method: "POST" })).status).toBe(200);
     expect((await read()).results.total).toBe(total);
+  });
+
+  it("refuses votes once closed but still shows the voter their vote", async () => {
+    const { cookie } = await login("PollLate");
+    expect((await vote("hidden", cookie)).status).toBe(200);
+    POLL.closesAt = "2000-01-01T00:00:00Z";
+    expect((await vote("visible", cookie)).status).toBe(409);
+    const body = await read(cookie);
+    expect(body.poll.open).toBe(false);
+    expect(body.myVote?.choice).toBe("hidden");
+    const list = (await (await request("/api/polls", { headers: { cookie } })).json()) as {
+      polls: { slug: string; open: boolean; myVote: string | null }[];
+    };
+    expect(list.polls[0]).toMatchObject({ slug: SLUG, open: false, myVote: "hidden" });
   });
 });
