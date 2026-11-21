@@ -32,7 +32,7 @@ import { BotContainer, botContainerStub, type BotContainerStatus, type JoinLobby
 import { ALL_LOBBIES_HTML, BOT_HTML, DOES_IT_WORK_HTML, POLLS_HTML, GAME_HTML, GAMES_HTML, LOBBIES_HTML, LOBBY_HTML, LOGIN_HTML, PLAYER_HTML, RANKING_HTML, SCOUTING_HTML, SQL_HTML } from "./ui";
 import { authApp } from "./authRoutes";
 import { pollApp } from "./pollRoutes";
-import { POLLS, findPoll, pollMetaTags } from "./polls";
+import { findPoll, pollMetaTags } from "./polls";
 import { scoutApp } from "./scoutRoutes";
 import { scoutLobby, type ScoutCard } from "./scout";
 import { accessConfigured, adminRequest, clearedAccessCookie, loginNext } from "./access";
@@ -196,9 +196,9 @@ app.get("/player/:userId", (c) => page(c, PLAYER_HTML));
 // Games pages: the paged games table and one game's detail (both over /api/games).
 app.get("/games", (c) => page(c, GAMES_HTML));
 app.get("/scouting", (c) => page(c, SCOUTING_HTML));
-// Polls (src/polls.ts): /polls shows the newest poll, /polls/:slug any one.
+// Polls (src/polls.ts): /polls is the list of polls, /polls/:slug one poll.
 // The page reads the slug from its URL; the API is pollApp.
-app.get("/polls", (c) => c.redirect(`/polls/${POLLS[0].slug}`, 302));
+app.get("/polls", (c) => page(c, POLLS_HTML));
 // Served with the poll's link-preview tags (Open Graph) in <head>, so a pasted
 // link unfurls in Discord as the poll; the page's own <title> gives way to it.
 app.get("/polls/:slug", (c) => {

@@ -2,7 +2,7 @@
 // Mounted into the main Hono app by src/index.ts; the pages (/polls,
 // /polls/:slug) are registered there with the other pages.
 //
-//   GET  /api/polls                 → {polls: [{slug, title, openedAt, closesAt, open}]}
+//   GET  /api/polls                 → {polls: [{slug, title, openedAt, closesAt, open, options, results, myVote}], user}
 //   GET  /api/polls/:slug           → the poll, its results, the caller's vote
 //   POST /api/polls/:slug/vote      {choice} → the same, after voting
 //
@@ -44,21 +44,29 @@ async function pollBody(c: C, poll: PollDef, user: AuthUser | null) {
   };
 }
 
-pollApp.get("/api/polls", (c) =>
-  c.json(
-    {
-      polls: POLLS.map((p) => ({
+// The list page's data: every poll with its overall tally and the caller's
+// own pick. There are only a handful of polls and each tally is cached in the
+// LosDO, so this is one cheap pollState call per poll.
+pollApp.get("/api/polls", async (c) => {
+  const user = await currentUser(c);
+  const los = losStub(c.env);
+  const polls = await Promise.all(
+    POLLS.map(async (p) => {
+      const s = await los.pollState(p.slug, { userId: user?.userId ?? null });
+      return {
         slug: p.slug,
         title: p.title,
         openedAt: p.openedAt,
         closesAt: p.closesAt ?? null,
         open: pollOpen(p),
-      })),
-    },
-    200,
-    NO_STORE,
-  ),
-);
+        options: p.options.map((o) => ({ key: o.key, label: o.label, heading: o.heading ?? null, color: o.color })),
+        results: { total: s.total, counts: s.counts },
+        myVote: s.myVote?.choice ?? null,
+      };
+    }),
+  );
+  return c.json({ polls, user }, 200, NO_STORE);
+});
 
 pollApp.get("/api/polls/:slug", async (c) => {
   const poll = findPoll(c.req.param("slug"));
