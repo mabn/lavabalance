@@ -85,6 +85,22 @@ export const LOS_KEYS: ReadonlySet<string> = new Set([
   "avg",
 ]);
 
+/**
+ * Whether LOS is public. True since 2026-11-21: everyone sees ratings, the LOS
+ * leaderboard and its order, the rating chart and the leaderboard position;
+ * a PRIVATE profile is still redacted (that is a separate filter, in LosDO).
+ * False brings back the tier-only visitor view of 2026-11-01, where every
+ * response to a non-admin went through stripLos. Mirrored by LOS_PUBLIC in
+ * the pages' SHARED_JS (src/ui.ts).
+ */
+export const LOS_PUBLIC = true;
+
+/** What a non-admin reader gets: the body as it is while LOS is public, else
+ * the stripped one. */
+export function visitorView<T>(body: T): T {
+  return LOS_PUBLIC ? body : stripLos(body);
+}
+
 /** A deep copy of `body` with every LOS_KEYS field set to null — the public
  * view. Nulled rather than dropped so the shape stays the admin one: a reader
  * already treats a null rating as withheld (a private profile's row). */

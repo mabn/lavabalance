@@ -148,7 +148,7 @@ describe("upload", () => {
     const C = () => lavaReplay({ ...day(2, 12, "gC"), winner: 0 });
     const O = () => lavaReplay({ ...day(2, 11, "gO"), winner: 0, mapName: "Hellas Basin v1.4" });
     const snapshot = async () => ({
-      ranking: (await getJson("/api/ranking?perPage=200")).players.map((p: any) => [p.userId, p.los, p.games, p.wins, p.rank]),
+      ranking: (await getJson("/api/ranking?sort=rank&perPage=200")).players.map((p: any) => [p.userId, p.los, p.games, p.wins, p.rank]),
       b: (await getJson("/api/games/gB")).teams.flat().map((p: any) => [p.userId, p.losBefore, p.losDelta]),
       c: (await getJson("/api/games/gC")).teams.flat().map((p: any) => [p.userId, p.losBefore, p.losDelta]),
     });
@@ -260,7 +260,7 @@ describe("start metal storage rule", () => {
       lavaReplay({ id: "d", startTime: at(3) }),
     ];
     const snapshot = async () =>
-      (await getJson("/api/ranking?perPage=200")).players.map((p: any) => [p.userId, p.los, p.games, p.wins]);
+      (await getJson("/api/ranking?sort=rank&perPage=200")).players.map((p: any) => [p.userId, p.los, p.games, p.wins]);
     await upload(games());
     const want = await snapshot();
 
@@ -300,7 +300,7 @@ describe("ignoring a game", () => {
     const B = () => lavaReplay({ ...day(2, 11, "gB"), winner: 1 });
     const C = () => lavaReplay({ ...day(2, 12, "gC"), winner: 0 });
     const ranking = async () =>
-      (await getJson("/api/ranking?perPage=200")).players.map((p: any) => [p.userId, p.los, p.games, p.wins]);
+      (await getJson("/api/ranking?sort=rank&perPage=200")).players.map((p: any) => [p.userId, p.los, p.games, p.wins]);
 
     await upload([A(), B(), C()]);
     const rated = await ranking();
@@ -372,7 +372,7 @@ describe("ignoring a game", () => {
 describe("ranking", () => {
   it("includes every rated player by default, ranked by LOS, and pages", async () => {
     await upload([lavaReplay({ ...day(2, 10, "g1") }), lavaReplay({ ...day(2, 12, "g2") })]);
-    const all = await getJson("/api/ranking");
+    const all = await getJson("/api/ranking?sort=rank");
     expect(all.total).toBe(16);
     expect(all.minGames).toBeUndefined();
     expect(all.players).toHaveLength(16);
@@ -383,25 +383,25 @@ describe("ranking", () => {
     const los = all.players.map((p: any) => p.los);
     expect(los).toEqual([...los].sort((a: number, b: number) => b - a));
 
-    const page2 = await getJson("/api/ranking?perPage=10&page=2");
+    const page2 = await getJson("/api/ranking?sort=rank&perPage=10&page=2");
     expect(page2.players).toHaveLength(6);
     expect(page2.players[0].rank).toBe(11);
     expect(page2.players[0].userId).toBe(all.players[10].userId);
     // minGames is gone: the parameter is ignored, every rated player is listed.
-    expect((await getJson("/api/ranking?minGames=3")).total).toBe(16);
+    expect((await getJson("/api/ranking?sort=rank&minGames=3")).total).toBe(16);
   });
 
   it("prefix-searches the ranking by name, keeping the global rank", async () => {
     // Team 0 = player101..108 wins both games, so they rank above team 1 (201..208).
     await upload([lavaReplay(day(2, 10, "g1")), lavaReplay(day(2, 12, "g2"))]);
-    const all = await getJson("/api/ranking?perPage=100&includePrivate=true");
+    const all = await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true");
     const rankOf = new Map(all.players.map((p: any) => [p.userId, p.rank]));
-    // A visitor's matches carry no number: the LOS position is hidden, and a
-    // place on the tier board would cost a count per match.
-    expect((await getJson("/api/ranking?q=player2")).players.every((p: any) => p.rank === null)).toBe(true);
+    // LOS is public: a visitor's matches carry their global position too.
+    const pubLosers = await getJson("/api/ranking?sort=rank&q=player2");
+    for (const p of pubLosers.players) expect(p.rank).toBe(rankOf.get(p.userId));
 
     // "player2" matches the eight losers only (prefix, not contains: "layer" matches nobody).
-    const losers = await getJson("/api/ranking?q=player2&includePrivate=true");
+    const losers = await getJson("/api/ranking?sort=rank&q=player2&includePrivate=true");
     expect(losers.total).toBe(8);
     expect(losers.q).toBe("player2");
     expect(losers.players.map((p: any) => p.userId).sort()).toEqual([201, 202, 203, 204, 205, 206, 207, 208]);
@@ -410,19 +410,19 @@ describe("ranking", () => {
     expect(Math.min(...losers.players.map((p: any) => p.rank))).toBe(9);
     // Ordered by LOS like the leaderboard.
     expect(losers.players.map((p: any) => p.rank)).toEqual([...losers.players].map((p: any) => p.rank).sort((a, b) => a - b));
-    expect((await getJson("/api/ranking?q=layer")).total).toBe(0);
+    expect((await getJson("/api/ranking?sort=rank&q=layer")).total).toBe(0);
 
     // Case-insensitive; paging covers the matches.
-    expect((await getJson("/api/ranking?q=PLAYER2")).total).toBe(8);
-    const p2 = await getJson("/api/ranking?q=player&perPage=5&page=4&includePrivate=true");
+    expect((await getJson("/api/ranking?sort=rank&q=PLAYER2")).total).toBe(8);
+    const p2 = await getJson("/api/ranking?sort=rank&q=player&perPage=5&page=4&includePrivate=true");
     expect(p2.total).toBe(16);
     expect(p2.players).toHaveLength(1);
     expect(p2.players[0].rank).toBe(16);
     // LIKE wildcards in the input are literal.
-    expect((await getJson("/api/ranking?q=%")).total).toBe(0);
-    expect((await getJson("/api/ranking?q=player10_")).total).toBe(0);
+    expect((await getJson("/api/ranking?sort=rank&q=%")).total).toBe(0);
+    expect((await getJson("/api/ranking?sort=rank&q=player10_")).total).toBe(0);
     // Blank q = the plain leaderboard.
-    expect((await getJson("/api/ranking?q=%20")).total).toBe(16);
+    expect((await getJson("/api/ranking?sort=rank&q=%20")).total).toBe(16);
   });
 });
 
@@ -483,14 +483,15 @@ describe("games list & detail", () => {
 
   it("serves game detail with LOS deltas and a pre-game prediction", async () => {
     await upload([lavaReplay({ ...day(2, 10, "g1") })]);
-    // LOS is admin-only; a visitor gets the same game with every LOS nulled
-    // and each player's rank tier going in (all placing at game 1).
+    // LOS is public: a visitor gets the same game with the LOS in it, and each
+    // player's rank tier going in (all placing at game 1).
     const pub = await getJson("/api/games/g1");
     for (const p of [...pub.teams[0], ...pub.teams[1]]) {
-      expect([p.losBefore, p.losAfter, p.losDelta, p.muBefore, p.sigmaAfter]).toEqual([null, null, null, null, null]);
+      expect(p.losBefore).not.toBeNull();
+      expect(p.losDelta).not.toBeNull();
       expect(p.tier).toBe("placing");
     }
-    expect(pub.avgLosBefore).toBeNull();
+    expect(pub.avgLosBefore).toHaveLength(2);
     expect(pub.predictedWin).toHaveLength(2);
     const g = await getJson("/api/games/g1?includePrivate=true");
     expect(g.seq).toBe(1);
@@ -578,11 +579,14 @@ describe("players", () => {
       lavaReplay({ ...day(2, 10, "g1"), skills: { 101: "[30.9]" } }),
       lavaReplay({ ...day(2, 12, "g2"), winner: 1 }),
     ]);
+    // LOS is public: a visitor gets the rating, the chart and the position.
     const pub = await getJson("/api/players/101");
-    expect([pub.los, pub.mu, pub.sigma, pub.leaderboardRating]).toEqual([null, null, null, null]);
+    expect(pub.los).not.toBeNull();
+    expect(pub.mu).not.toBeNull();
     expect(pub.tier).toBe("placing");
-    expect(pub.recentGames[0].losBefore).toBeNull();
-    expect((await getJson("/api/players/101/history")).points).toEqual([]);
+    expect(pub.rank).not.toBeNull();
+    expect(pub.recentGames[0].losBefore).not.toBeNull();
+    expect((await getJson("/api/players/101/history")).points).toHaveLength(2);
     const p = await getJson("/api/players/101?includePrivate=true");
     expect(p.tier).toBe("placing");
     expect(p.name).toBe("player101");
@@ -634,9 +638,10 @@ describe("players", () => {
 
   it("bulk-resolves current names case-insensitively via /api/players/lookup", async () => {
     await upload([lavaReplay(day(2, 10, "g1"))]);
-    // A visitor gets the names resolved with the tier, no LOS.
+    // A visitor gets the names resolved with the LOS and the tier.
     const pub = await getJson("/api/players/lookup?names=PLAYER101");
-    expect(pub.players.player101).toMatchObject({ userId: 101, los: null, mu: null, tier: "placing" });
+    expect(pub.players.player101).toMatchObject({ userId: 101, tier: "placing" });
+    expect(pub.players.player101.los).not.toBeNull();
     const out = await getJson("/api/players/lookup?names=PLAYER101,player201,%20player102%20,ghost&includePrivate=true");
     // Keyed by the lowercased name; unknown names are simply absent.
     expect(Object.keys(out.players).sort()).toEqual(["player101", "player102", "player201"]);
@@ -663,7 +668,7 @@ describe("private profiles", () => {
   });
 
   it("moves a hidden player to a rankless tail and keeps the ranks above gapless", async () => {
-    const before = await getJson("/api/ranking?perPage=100");
+    const before = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(before.total).toBe(16);
     expect(before.players.every((p: any) => p.privateProfile === false)).toBe(true);
     const hiddenRank = before.players.find((p: any) => p.userId === 101).rank;
@@ -676,7 +681,7 @@ describe("private profiles", () => {
       changed: true,
     });
 
-    const after = await getJson("/api/ranking?perPage=100");
+    const after = await getJson("/api/ranking?sort=rank&perPage=100");
     // Still listed — the total is everyone — but LAST, and with no position.
     expect(after.total).toBe(16);
     expect(after.players).toHaveLength(16);
@@ -699,49 +704,51 @@ describe("private profiles", () => {
     }
 
     // Paging: the tail lands on the last page, after the ranked players.
-    const page2 = await getJson("/api/ranking?perPage=10&page=2");
+    const page2 = await getJson("/api/ranking?sort=rank&perPage=10&page=2");
     expect(page2.total).toBe(16);
     expect(page2.players).toHaveLength(6);
     expect(page2.players[0].rank).toBe(11);
     expect(page2.players.at(-1).userId).toBe(101);
     expect(page2.players.at(-1).rank).toBeNull();
     // A page that is ALL tail works too, and one past the end is empty.
-    const last = await getJson("/api/ranking?perPage=5&page=4");
+    const last = await getJson("/api/ranking?sort=rank&perPage=5&page=4");
     expect(last.players.map((p: any) => p.userId)).toEqual([101]);
-    expect((await getJson("/api/ranking?perPage=5&page=5")).players).toEqual([]);
+    expect((await getJson("/api/ranking?sort=rank&perPage=5&page=5")).players).toEqual([]);
 
     // Prefix search: matching public players first with their GLOBAL rank, then
     // the matching hidden ones in the tail.
-    const search = await getJson("/api/ranking?q=player1");
+    const search = await getJson("/api/ranking?sort=rank&q=player1");
     expect(search.total).toBe(8);
     expect(search.players.at(-1).userId).toBe(101);
     expect(search.players.at(-1).rank).toBeNull();
-    // No numbers on a visitor's matches; the ranked ones still lead.
+    // The ranked matches lead, with their PUBLIC rank (no gap for the hidden one).
     expect(search.rankedTotal).toBe(7);
-    expect(search.players.every((p: any) => p.rank === null)).toBe(true);
-    expect(search.players.slice(0, 7).every((p: any) => !p.privateProfile)).toBe(true);
+    const publicRank = new Map(ranked.map((p: any) => [p.userId, p.rank]));
+    for (const p of search.players.filter((x: any) => !x.privateProfile)) {
+      expect(p.rank).toBe(publicRank.get(p.userId));
+    }
     // A search that matches ONLY the hidden player still finds them.
-    const only = await getJson("/api/ranking?q=player101");
+    const only = await getJson("/api/ranking?sort=rank&q=player101");
     expect(only.total).toBe(1);
     expect(only.players[0]).toMatchObject({ userId: 101, rank: null, los: null });
 
     // Unhiding restores the list, the order and every rank.
     expect((await setPrivate(101, false)).changed).toBe(true);
-    const restored = await getJson("/api/ranking?perPage=100");
+    const restored = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(restored.total).toBe(16);
     expect(restored.players.map((p: any) => [p.userId, p.rank]))
       .toEqual(before.players.map((p: any) => [p.userId, p.rank]));
   });
 
   it("orders the tail by recency, saying nothing about how its players rate", async () => {
-    const before = await getJson("/api/ranking?perPage=100");
+    const before = await getJson("/api/ranking?sort=rank&perPage=100");
     const rank = new Map(before.players.map((p: any) => [p.userId, p.rank]));
     // Two hidden players whose RATINGS differ: the tail must not order by them.
     await setPrivate(108, true);
     await setPrivate(101, true);
     expect(rank.get(101)).not.toBe(rank.get(108));
 
-    const r = await getJson("/api/ranking?perPage=100");
+    const r = await getJson("/api/ranking?sort=rank&perPage=100");
     const tail = r.players.slice(-2);
     expect(tail.every((p: any) => p.rank === null && p.los === null)).toBe(true);
     // Same last game, so the tie breaks on user_id — either way, nothing about
@@ -757,11 +764,11 @@ describe("private profiles", () => {
   });
 
   it("shows the admin the true leaderboard, hidden players in their real places", async () => {
-    const before = await getJson("/api/ranking?perPage=100");
+    const before = await getJson("/api/ranking?sort=rank&perPage=100");
     const trueRank = new Map(before.players.map((p: any) => [p.userId, p.rank]));
     await setPrivate(101, true);
 
-    const admin = await getJson("/api/ranking?perPage=100&includePrivate=true");
+    const admin = await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true");
     expect(admin.total).toBe(16);
     expect(admin.includePrivate).toBe(true);
     expect(admin.players).toHaveLength(16);
@@ -773,12 +780,12 @@ describe("private profiles", () => {
     expect(hidden.rank).toBe(trueRank.get(101));
     expect(hidden.los).toBeGreaterThan(0);
     // The search path agrees, and keeps the true global rank.
-    const search = await getJson("/api/ranking?q=player101&includePrivate=true");
+    const search = await getJson("/api/ranking?sort=rank&q=player101&includePrivate=true");
     expect(search.total).toBe(1);
     expect(search.players[0].rank).toBe(trueRank.get(101));
     expect(search.players[0].privateProfile).toBe(true);
     // Admin reads are never cached — the admin view must not reach a visitor.
-    const res = await call(`${BASE}/api/ranking?includePrivate=true`);
+    const res = await call(`${BASE}/api/ranking?sort=rank&includePrivate=true`);
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -815,9 +822,10 @@ describe("private profiles", () => {
     const other = await getJson("/api/players/201");
     expect(other.privateProfile).toBe(false);
     expect(other.tier).not.toBeNull();
-    // No leaderboard position on a visitor's profile at all.
-    expect(other.rank).toBeNull();
-    expect(other.rankedOf).toBeNull();
+    // "#N of M" counts the players the public ranking numbers — the hidden one
+    // is listed, but in the rankless tail, so it is not one of them.
+    expect(other.rankedOf).toBe(15);
+    expect(other.rank).toBeLessThanOrEqual(15);
   });
 
   it("serves the whole hidden profile to the admin view", async () => {
@@ -854,7 +862,7 @@ describe("private profiles", () => {
     expect(rated.rated).toEqual(["g3"]);
     expect((await getJson("/api/players/101?includePrivate=true")).games).toBe(3);
     // Still hidden after the upload — the fold never touches the flag.
-    const listed = await getJson("/api/ranking?perPage=100");
+    const listed = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(listed.players.find((x: any) => x.userId === 101))
       .toMatchObject({ rank: null, los: null, privateProfile: true });
   });
@@ -894,9 +902,12 @@ describe("private profiles", () => {
     expect(other).toEqual(before.teams.flat().find((x: any) => x.userId === 201));
     expect(other.privateProfile).toBeUndefined();
     expect(game.predictedWin).toEqual(before.predictedWin);
-    // A visitor sees no LOS at all now, so the averages are withheld too; the
-    // rank tier goes with the rest of a private player's rating.
-    expect(game.avgLosBefore).toBeNull();
+    expect(game.avgLosBefore).toEqual(before.avgLosBefore);
+    // The average really does still count all eight — averaging what is left
+    // would drop the hidden player and give their rating away by subtraction.
+    const team0 = before.teams[0].map((x: any) => x.losBefore);
+    expect(game.avgLosBefore[0]).toBeCloseTo(team0.reduce((a: number, b: number) => a + b, 0) / 8, 9);
+    // The rank tier goes with the rest of a private player's rating.
     expect(me.tier).toBeNull();
     expect(other.tier).not.toBeNull();
 
@@ -969,7 +980,7 @@ describe("private profiles", () => {
     // A rebase recounts from scratch; the flag and the private count must hold.
     const rebase = await postJson("/api/games/g1/rebase", {});
     expect(rebase.ok).toBe(true);
-    const after = await getJson("/api/ranking?perPage=100");
+    const after = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(after.players.at(-1)).toMatchObject({ userId: 101, rank: null, los: null });
     expect((await getJson("/api/players/101")).privateProfile).toBe(true);
 
@@ -1016,7 +1027,7 @@ describe("inactive players", () => {
   });
 
   it("keeps a lapsed player off the leaderboard, in the tail with no rank", async () => {
-    const r = await getJson("/api/ranking?perPage=100");
+    const r = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(r.total).toBe(32); // everyone is still LISTED
     expect(r.rankedTotal).toBe(16); // only the recent cast is ranked
 
@@ -1030,7 +1041,7 @@ describe("inactive players", () => {
     // public (and the rating is there for an admin, as for anyone).
     const lapsed = tail[0];
     expect(lapsed.tier).not.toBeNull();
-    const lapsedAdmin = (await getJson("/api/ranking?perPage=100&includePrivate=true")).players.find(
+    const lapsedAdmin = (await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true")).players.find(
       (p: any) => p.userId === lapsed.userId,
     );
     expect(lapsedAdmin.los).toBeGreaterThan(0);
@@ -1052,26 +1063,26 @@ describe("inactive players", () => {
   });
 
   it("pages the tail in SQL, so a page of lapsed players is a page", async () => {
-    const page1 = await getJson("/api/ranking?perPage=10&page=1");
+    const page1 = await getJson("/api/ranking?sort=rank&perPage=10&page=1");
     expect(page1.players.map((p: any) => p.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     // Page 2 straddles the join: the last 6 ranked, then the first 4 lapsed.
-    const page2 = await getJson("/api/ranking?perPage=10&page=2");
+    const page2 = await getJson("/api/ranking?sort=rank&perPage=10&page=2");
     expect(page2.players.slice(0, 6).map((p: any) => p.rank)).toEqual([11, 12, 13, 14, 15, 16]);
     expect(page2.players.slice(6).every((p: any) => p.rank === null && p.inactive)).toBe(true);
     // Page 3 is all tail; page 4 is past the end.
-    const page3 = await getJson("/api/ranking?perPage=10&page=3");
+    const page3 = await getJson("/api/ranking?sort=rank&perPage=10&page=3");
     expect(page3.players).toHaveLength(10);
     expect(page3.players.every((p: any) => p.rank === null)).toBe(true);
-    expect((await getJson("/api/ranking?perPage=10&page=4")).players).toHaveLength(2);
-    expect((await getJson("/api/ranking?perPage=10&page=5")).players).toEqual([]);
+    expect((await getJson("/api/ranking?sort=rank&perPage=10&page=4")).players).toHaveLength(2);
+    expect((await getJson("/api/ranking?sort=rank&perPage=10&page=5")).players).toEqual([]);
     // No page repeats a player, and together they are everyone.
-    const seen = [page1, page2, page3, await getJson("/api/ranking?perPage=10&page=4")]
+    const seen = [page1, page2, page3, await getJson("/api/ranking?sort=rank&perPage=10&page=4")]
       .flatMap((p: any) => p.players.map((x: any) => x.userId));
     expect(new Set(seen).size).toBe(32);
   });
 
   it("ranks a lapsed player again as soon as they play, and re-ranks the rest", async () => {
-    const before = await getJson("/api/ranking?perPage=100");
+    const before = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(before.rankedTotal).toBe(16);
 
     // 101 turns up in a recent game; the other seven of their cast do not.
@@ -1079,7 +1090,7 @@ describe("inactive players", () => {
       lavaReplay({ ...day(3, 10, "new2"), teams: [[101, 302, 303, 304, 305, 306, 307, 308], NEW_B] }),
     ]);
 
-    const after = await getJson("/api/ranking?perPage=100");
+    const after = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(after.rankedTotal).toBe(17);
     const back = after.players.find((p: any) => p.userId === 101);
     expect(back.inactive).toBe(false);
@@ -1089,14 +1100,14 @@ describe("inactive players", () => {
     // Ranks stay 1..17 with no hole where the returning player slotted in.
     expect(after.players.slice(0, 17).map((p: any) => p.rank))
       .toEqual(Array.from({ length: 17 }, (_, i) => i + 1));
-    const adminBack = (await getJson("/api/ranking?perPage=100&includePrivate=true")).players.find(
+    const adminBack = (await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true")).players.find(
       (p: any) => p.userId === 101,
     );
     expect((await getJson("/api/players/101?includePrivate=true")).rank).toBe(adminBack.rank);
   });
 
   it("shows the admin the whole leaderboard, lapsed players in their real places", async () => {
-    const admin = await getJson("/api/ranking?perPage=100&includePrivate=true");
+    const admin = await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true");
     expect(admin.total).toBe(32);
     expect(admin.rankedTotal).toBe(16);
     expect(admin.players).toHaveLength(32);
@@ -1109,7 +1120,7 @@ describe("inactive players", () => {
 
   it("keeps the two reasons apart: private hides, inactive only unranks", async () => {
     await setPrivate(301, true); // ranked → private
-    const r = await getJson("/api/ranking?perPage=100");
+    const r = await getJson("/api/ranking?sort=rank&perPage=100");
     const priv = r.players.find((p: any) => p.userId === 301);
     const lapsed = r.players.find((p: any) => p.userId === 101);
     expect(priv).toMatchObject({ rank: null, los: null, tier: null, privateProfile: true, inactive: false });
@@ -1136,7 +1147,7 @@ describe("inactive players", () => {
       expect(priv.count("players_ranked")).toBe(16); // still says so
     });
     // The next read notices.
-    const r = await getJson("/api/ranking?perPage=100");
+    const r = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(r.rankedTotal).toBe(0);
     expect(r.players.every((p: any) => p.rank === null && p.inactive)).toBe(true);
     expect(r.total).toBe(32);
@@ -1151,7 +1162,7 @@ describe("reset", () => {
 
     const res = await call(`${BASE}/api/reset?confirm=true`, { method: "POST" });
     expect(res.status).toBe(200);
-    const ranking = await getJson("/api/ranking");
+    const ranking = await getJson("/api/ranking?sort=rank");
     expect(ranking.total).toBe(0);
     expect(ranking.lastSeq).toBe(0);
 
@@ -1172,20 +1183,20 @@ describe("derived data: counts and materialized ranks", () => {
 
     expect((await getJson("/api/games?limit=1")).total).toBe(4);
     expect((await getJson("/api/games?limit=1&rated=true")).total).toBe(3);
-    const ranking = await getJson("/api/ranking?perPage=100");
+    const ranking = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(ranking.total).toBe(24);
     expect(ranking.players).toHaveLength(24);
 
     // The player page's rank is the materialized column; it must equal the
     // leaderboard position for everyone, and rankedOf the maintained total.
-    const adminRanking = await getJson("/api/ranking?perPage=100&includePrivate=true");
+    const adminRanking = await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true");
     for (const p of adminRanking.players) {
       const profile = await getJson(`/api/players/${p.userId}?includePrivate=true`);
       expect(profile.rank).toBe(p.rank);
       expect(profile.rankedOf).toBe(24);
     }
     // The search's global rank comes from the same column.
-    const found = await getJson("/api/ranking?q=player3&includePrivate=true");
+    const found = await getJson("/api/ranking?sort=rank&q=player3&includePrivate=true");
     expect(found.total).toBe(8);
     const rankOf = new Map(adminRanking.players.map((p: any) => [p.userId, p.rank]));
     for (const p of found.players) expect(p.rank).toBe(rankOf.get(p.userId));
@@ -1255,11 +1266,11 @@ describe("derived data: counts and materialized ranks", () => {
     });
 
     // And the pages work on it.
-    const r = await getJson("/api/ranking?perPage=100");
+    const r = await getJson("/api/ranking?sort=rank&perPage=100");
     expect(r.total).toBe(16);
     expect(r.rankedTotal).toBe(16);
     expect(r.players.map((p: any) => p.rank)).toEqual(Array.from({ length: 16 }, (_, i) => i + 1));
-    const ra = await getJson("/api/ranking?perPage=100&includePrivate=true");
+    const ra = await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true");
     expect((await getJson("/api/players/101?includePrivate=true")).rank).toBe(
       ra.players.find((p: any) => p.userId === 101).rank,
     );
@@ -1350,8 +1361,61 @@ describe("rank tiers", () => {
   });
 });
 
+describe("the default board", () => {
+  it("ranks each tier's public profiles by LOS, then its private ones by games", async () => {
+    // 101..108 win twice; 201..208 also play a third game, so they have more games.
+    await upload([
+      lavaReplay(day(2, 10, "b1")),
+      lavaReplay(day(2, 12, "b2")),
+      lavaReplay({ ...day(2, 14, "b3"), teams: [[201, 202, 203, 204, 205, 206, 207, 208], [301, 302, 303, 304, 305, 306, 307, 308]] }),
+    ]);
+    await setPrivate(101, true); // 2 games
+    await setPrivate(201, true); // 3 games
+    const r = await getJson("/api/ranking?perPage=100");
+    expect([r.sort, r.dir]).toEqual(["board", "desc"]);
+    expect(r.rankedTotal).toBe(24); // everyone is active, private or not
+    // Everyone is numbered by their place on the board.
+    expect(r.players.map((p: any) => p.rank)).toEqual(r.players.map((_: any, i: number) => i + 1));
+    const order = ["placing", "bronze", "silver", "gold", "platinum", "diamond"];
+    for (let i = 1; i < r.players.length; i++) {
+      const [a, b] = [r.players[i - 1], r.players[i]];
+      const ta = order.indexOf(a.tier), tb = order.indexOf(b.tier);
+      expect(ta >= tb).toBe(true);
+      if (ta !== tb) continue;
+      // Within a tier: public before private; public by LOS, private by games.
+      expect(Number(a.privateProfile) <= Number(b.privateProfile)).toBe(true);
+      if (!a.privateProfile && !b.privateProfile) expect(a.los >= b.los).toBe(true);
+      if (a.privateProfile && b.privateProfile) expect(a.games >= b.games).toBe(true);
+    }
+    // The private ones: tier shown (it is what places them), rating withheld.
+    const priv = r.players.filter((p: any) => p.privateProfile);
+    expect(priv.map((p: any) => [p.userId, p.games])).toEqual([[201, 3], [101, 2]]);
+    for (const p of priv) expect(p).toMatchObject({ los: null, mu: null, rankChange7d: null });
+    for (const p of priv) expect(p.tier).not.toBeNull();
+    // Reversed, it is the same board upside down.
+    const asc = await getJson("/api/ranking?perPage=100&dir=asc");
+    expect(asc.players.map((p: any) => p.userId)).toEqual(r.players.map((p: any) => p.userId).reverse());
+    // Paging walks the same order.
+    const page2 = await getJson("/api/ranking?perPage=5&page=2");
+    expect(page2.players.map((p: any) => p.userId)).toEqual(r.players.slice(5, 10).map((p: any) => p.userId));
+    expect(page2.players[0].rank).toBe(6);
+  });
+
+  it("ends in the lapsed players, most recently seen first", async () => {
+    await upload([lavaReplay(staleDay(10, "old")), lavaReplay({ ...day(2, 10, "new"), teams: [[301, 302, 303, 304, 305, 306, 307, 308], [401, 402, 403, 404, 405, 406, 407, 408]] })]);
+    await setPrivate(101, true); // lapsed AND private: still the tail
+    const r = await getJson("/api/ranking?perPage=100");
+    expect(r.rankedTotal).toBe(16);
+    expect(r.players.slice(0, 16).every((p: any) => p.userId >= 301 && p.rank != null)).toBe(true);
+    const tail = r.players.slice(16);
+    expect(tail).toHaveLength(16);
+    expect(tail.every((p: any) => p.rank === null && p.userId < 300)).toBe(true);
+    expect(tail.find((p: any) => p.userId === 101)).toMatchObject({ los: null, privateProfile: true });
+  });
+});
+
 describe("game rosters for a visitor", () => {
-  it("serves each team in LOS order, the numbers gone", async () => {
+  it("serves each team in LOS order, numbers included", async () => {
     await upload([lavaReplay(day(1, 10, "o1")), lavaReplay({ ...day(2, 10, "o2"), winner: 1 })]);
     const admin = await getJson("/api/games/o2?includePrivate=true");
     const visitor = await getJson("/api/games/o2");
@@ -1359,7 +1423,7 @@ describe("game rosters for a visitor", () => {
       const los = team.map((p: any) => p.losBefore);
       expect([...los].sort((a: number, b: number) => b - a)).toEqual(los);
       expect(visitor.teams[i].map((p: any) => p.userId)).toEqual(team.map((p: any) => p.userId));
-      expect(visitor.teams[i].every((p: any) => p.losBefore === null)).toBe(true);
+      expect(visitor.teams[i].map((p: any) => p.losBefore)).toEqual(los);
     }
   });
 });
@@ -1398,7 +1462,7 @@ describe("rank history", () => {
     await upload([lavaReplay(day(1, 10, "h1"))]);
     // The only snapshot is yesterday's; the baseline wants one from a week back,
     // so every row says "nothing to compare with" rather than "no movement".
-    const ranking = await getJson("/api/ranking");
+    const ranking = await getJson("/api/ranking?sort=rank");
     expect(ranking.changeDays).toBe(7);
     for (const p of ranking.players) {
       expect([p.rankChange7d, p.losChange7d]).toEqual([null, null]);
@@ -1427,7 +1491,7 @@ describe("rank history", () => {
       Array.from({ length: 8 }, (_, i) => ({ day: utcDay(-8 + i), rows: 16 })),
     );
 
-    const players = byId((await getJson("/api/ranking?perPage=100&includePrivate=true")).players);
+    const players = byId((await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true")).players);
     for (const userId of [101, 108]) {
       expect(players.get(userId).losChange7d).toBeLessThan(0);
       expect(players.get(userId).rankChange7d).toBeLessThanOrEqual(0);
@@ -1446,7 +1510,7 @@ describe("rank history", () => {
     // answer, and the rows are written by (day, user_id).
     const again = await postJson("/api/rank-history/rebuild", {});
     expect([again.days, again.rows, again.games]).toEqual([rebuilt.days, rebuilt.rows, rebuilt.games]);
-    const after = byId((await getJson("/api/ranking?perPage=100&includePrivate=true")).players);
+    const after = byId((await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true")).players);
     for (const [userId, p] of players) expect(after.get(userId).losChange7d).toBe(p.losChange7d);
   });
 
@@ -1459,7 +1523,7 @@ describe("rank history", () => {
     ]);
     await postJson("/api/rank-history/rebuild", {});
 
-    const players = byId((await getJson("/api/ranking?perPage=100&includePrivate=true")).players);
+    const players = byId((await getJson("/api/ranking?sort=rank&perPage=100&includePrivate=true")).players);
     // Undoing somebody's FIRST rated game undoes their existence, so they are on
     // no snapshot older than it and there is nothing to be a change in.
     for (const userId of [301, 401]) {
@@ -1478,12 +1542,11 @@ describe("rank history", () => {
     await postJson("/api/rank-history/rebuild", {});
     await setPrivate(201, true);
 
-    const hidden = byId((await getJson("/api/ranking?perPage=100")).players).get(201);
-    // The rating and the position go (see redactRatedPlayer). What MOVED is
-    // LOS too, so a visitor no longer gets it for anyone.
+    const hidden = byId((await getJson("/api/ranking?sort=rank&perPage=100")).players).get(201);
+    // The rating and the position go (see redactRatedPlayer); what MOVED stays,
+    // for the same reason a private player's Δ LOS survives on a game roster.
     expect([hidden.rank, hidden.los, hidden.tier]).toEqual([null, null, null]);
-    expect(hidden.rankChange7d).not.toBeUndefined();
-    expect(hidden.losChange7d).toBeNull();
+    expect(hidden.losChange7d).toBeGreaterThan(0);
   });
 
   it("drops the history with a reset and prunes it with the retention", async () => {
@@ -1537,45 +1600,30 @@ describe("ranking sort", () => {
     await postJson("/api/rank-history/rebuild", {});
   }
 
-  it("serves a visitor the tier board only: tier, then games, numbered 1..N, no rank movement", async () => {
+  it("serves a visitor every order the admin has, leaderboard by default", async () => {
     await seedMovement();
-    // Whatever a visitor asks for, the order is the tier board's.
-    for (const q of ["", "sort=los&dir=desc", "sort=rank&dir=asc", "sort=rankChange&dir=desc"]) {
-      const r = await getJson(`/api/ranking?perPage=100&${q}`);
-      expect(r.sort, q).toBe("tier");
-    }
-    const r = await getJson("/api/ranking?perPage=100");
-    const order = ["placing", "bronze", "silver", "gold", "platinum", "diamond"];
-    const head = r.players.slice(0, r.rankedTotal);
-    for (let i = 1; i < head.length; i++) {
-      const [a, b] = [head[i - 1], head[i]];
-      const ta = order.indexOf(a.tier), tb = order.indexOf(b.tier);
-      expect(ta >= tb).toBe(true);
-      if (ta === tb) expect(a.games >= b.games).toBe(true);
-    }
+    // LOS is public: a visitor can have the LOS leaderboard (the default is the board).
+    expect((await getJson("/api/ranking?perPage=100")).sort).toBe("board");
+    const def = await getJson("/api/ranking?sort=rank&perPage=100");
+    expect([def.sort, def.dir]).toEqual(["rank", "asc"]);
+    const head = def.players.slice(0, def.rankedTotal);
     expect(head.map((p: any) => p.rank)).toEqual(head.map((_: any, i: number) => i + 1));
-    expect(r.players.every((p: any) => p.rankChange7d === null && p.los === null)).toBe(true);
-    // Reversed, it is the same board upside down.
-    const asc = await getJson("/api/ranking?perPage=100&dir=asc");
-    expect(ids({ players: asc.players.slice(0, asc.rankedTotal) }))
-      .toEqual([...ids({ players: head })].reverse());
-    // The admin can sort by tier too, and keeps the leaderboard by default.
-    const a = await admin("sort=tier&dir=desc");
-    expect([a.sort, a.dir]).toEqual(["tier", "desc"]);
-    expect(a.players.some((p: any) => p.rankChange7d != null)).toBe(true);
+    expect(head.every((p: any) => p.los != null)).toBe(true);
+    for (const q of ["sort=los&dir=desc", "sort=rankChange&dir=desc", "sort=losChange&dir=asc", "sort=tier&dir=desc"]) {
+      const r = await getJson(`/api/ranking?perPage=100&${q}`);
+      expect(`sort=${r.sort}&dir=${r.dir}`).toBe(q);
+    }
+    expect(def.players.some((p: any) => p.rankChange7d != null)).toBe(true);
   });
 
-  it("defaults to the leaderboard it has always served, and says so", async () => {
+  it("defaults to the tier board, and says so", async () => {
     await upload([lavaReplay(day(1, 10, "s1"))]);
     const def = await admin("");
-    expect([def.sort, def.dir]).toEqual(["rank", "asc"]);
-    // Best first, which is what every reader of this API already gets.
-    const los = def.players.map((p: any) => p.los);
-    expect([...los].sort((a, b) => b - a)).toEqual(los);
+    expect([def.sort, def.dir]).toEqual(["board", "desc"]);
     // An unrecognized key or direction falls back rather than 400ing: a stale
     // or hand-written URL should still answer with a list.
     const junk = await admin("sort=nonsense&dir=sideways");
-    expect([junk.sort, junk.dir]).toEqual(["rank", "asc"]);
+    expect([junk.sort, junk.dir]).toEqual(["board", "desc"]);
     expect(ids(junk)).toEqual(ids(def));
   });
 
@@ -1625,7 +1673,7 @@ describe("ranking sort", () => {
   it("sorts the public list's head only, leaving the rankless tail alone", async () => {
     await upload([lavaReplay(day(1, 10, "s1")), lavaReplay(staleDay(10, "s2"))]);
     await setPrivate(101, true);
-    const sorted = await getJson("/api/ranking?perPage=100&dir=asc");
+    const sorted = await getJson("/api/ranking?perPage=100&sort=los&dir=asc");
     const ranked = sorted.players.filter((p: any) => p.rank != null);
     const tail = sorted.players.filter((p: any) => p.rank == null);
     // The head obeys the sort...

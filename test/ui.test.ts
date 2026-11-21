@@ -608,7 +608,7 @@ describe("private profiles in the UI", () => {
     expect(script).toContain("p.rank == null ? '<span class=\"muted\">–</span>' : String(p.rank)");
     expect(script).toContain("return (p.los == null");
     expect(script).toContain("'<span class=\"pill none\">–</span>'"); // keeps the column aligned
-    expect(script).toContain("const unranked = ADMIN_MODE ? p.rank == null : !!(p.privateProfile || p.inactive);");
+    expect(script).toContain("const unranked = SHOW_LOS ? p.rank == null : !!(p.privateProfile || p.inactive);");
     expect(script).toContain("'<tr' + (unranked ? ' class=\"unranked\"' : '') + '>'");
     expect(RANKING_HTML).toContain("tr.unranked td { background: #14171d; }");
   });
@@ -621,10 +621,10 @@ describe("private profiles in the UI", () => {
     // decimal, and each is read next to the thing it moved.
     const cols = script.slice(script.indexOf("function tableColumns()"));
     const labels = (src: string) => [...src.matchAll(/label: "([^"]+)"/g)].map((m) => m[1]);
-    const visitor = cols.slice(cols.indexOf("if (!ADMIN_MODE)"), cols.indexOf("].concat(statColumns());"));
+    const visitor = cols.slice(cols.indexOf("if (!SHOW_LOS)"), cols.indexOf("].concat(statColumns());"));
     const admin = cols.slice(cols.indexOf("].concat(statColumns());") + 1);
     const stats = script.slice(script.indexOf("function statColumns()"));
-    // A visitor: the tier board, no movement columns (both are the LOS order).
+    // The tier-only board (used only if LOS is made admin-only again, LOS_PUBLIC).
     expect(labels(visitor)).toEqual(["#", "Player", "Rank"]);
     expect(labels(admin.slice(0, admin.indexOf("].concat(statColumns());")))).toEqual([
       "#", "\u0394 (7d)", "Player", "Rank", "LOS", "\u0394 (7d)",
@@ -720,12 +720,18 @@ describe("private profiles in the UI", () => {
   it("makes every column of the ranking sortable, both ways, server-side", () => {
     const script = inlineScript(RANKING_HTML);
     expect(script).toContain(
-      'const SORTS = ADMIN_MODE ? ["rank", "rankChange", "los", "losChange", "tier"] : ["tier"];',
+      'const SORTS = SHOW_LOS ? ["board", "rank", "rankChange", "los", "losChange", "tier"] : ["tier"];',
     );
     // A first click gives the direction that puts what the column is for on
     // top; clicking the sorted column reverses it.
-    expect(script).toContain('{ rank: "asc", los: "desc", rankChange: "desc", losChange: "desc", tier: "desc" }');
-    expect(script).toContain('const DEFAULT_SORT = ADMIN_MODE ? "rank" : "tier";');
+    expect(script).toContain('{ board: "desc", rank: "asc", los: "desc", rankChange: "desc", losChange: "desc", tier: "desc" }');
+    expect(script).toContain('const DEFAULT_SORT = SHOW_LOS ? "board" : "tier";');
+    // LOS is public: every reader gets the LOS leaderboard and its sorts.
+    expect(script).toContain("const LOS_PUBLIC = true;");
+    // The two movement columns are hidden in the table; the API keeps them.
+    expect(script).toContain("const SHOW_CHANGES = false;");
+    expect(script).toContain('(col.key !== "rankchg" && col.key !== "loschg")');
+    expect(script).toContain("const SHOW_LOS = ADMIN_MODE || LOS_PUBLIC;");
     expect(script).toContain('if (key === sort) dir = dir === "asc" ? "desc" : "asc";');
     // The order is the SERVER's — sorting the page in hand would only order the
     // rows already fetched — so a click is a refetch, and from page 1.
@@ -850,7 +856,7 @@ describe("private profiles in the UI", () => {
     expect(script).toContain("hideLos = data.privateProfile === true;");
     expect(script).toContain("const losCells = hideLos ? ''");
     expect(script).toContain("const losHeaders = hideLos ? ''");
-    expect(script).toContain("const cols = hideLos ? 6 : ADMIN_MODE ? 8 : 7;");
+    expect(script).toContain("const cols = hideLos ? 6 : SHOW_LOS ? 8 : 7;");
     expect(PLAYER_HTML).toContain(".private-note");
   });
 });

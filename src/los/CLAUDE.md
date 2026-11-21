@@ -45,7 +45,14 @@ Singleton `LosDO` (SQLite: games, game_players, players, meta, counts, rank_hist
 
 # Reference
 
-## Rank tiers: LOS is admin-only (since 2026-11-01)
+## Rank tiers (and LOS: public again since 2026-11-21)
+
+**LOS is public again** (`LOS_PUBLIC` in `src/los/tiers.ts`, mirrored in the
+pages' `SHARED_JS`): every reader gets the ratings, the LOS leaderboard with all
+its sorts (default `rank`), the chart and the "#N of M" position; tiers are
+shown beside the LOS, as the admin always saw. Only a PRIVATE profile is still
+redacted, which the LosDO does on its own. Setting `LOS_PUBLIC = false` in both
+places brings back the tier-only visitor view described below.
 
 Only an admin (Access superadmin, i.e. the `?includePrivate=true` admin view —
 the page's `withAdmin`) sees LOS. Everyone else sees a **rank tier**:
@@ -181,7 +188,17 @@ lavaos Worker (it holds the custom domain) and re-upload the day files
 - **Private profiles**: `players.private_profile` (0/1, admin-set via
   `POST /api/players/:userId/private` with `{"private": true|false}` — the
   ranking page's `⋯` row menu; 404 for an unrated user id, and the response's
-  `changed` says whether the flag actually moved). It is a **read filter on the
+  `changed` says whether the flag actually moved). Players can also set their OWN
+  through `GET`/`POST /api/me/privacy` (the website-login session decides whose
+  profile; the button on their player page, with a confirmation dialog). Making
+  it public records the time in `privacy_changes` (its own table: a rebase
+  recreates `players` rows, and `/api/reset` leaves it alone), and making it
+  private again within `PRIVATE_AGAIN_COOLDOWN_MS` (1 day) is a 409
+  `refused: "cooldown"`. An admin is never held and starts no wait. A toggle is
+  O(1): only the row's `private_profile`/`ranked` and `counts.players_ranked`
+  change; there is no `refreshRanks` walk, because `rank` does not depend on who
+  is hidden and `public_rank` is no longer served to anyone (it catches up at the
+  next upload). It is a **read filter on the
   site, not access control** — the fold still rates a hidden player, their rows
   in every game's roster and `/api/games/:id` are untouched, and
   `/api/players/lookup` still answers with their real rating, so the bot keeps
@@ -281,7 +298,7 @@ lavaos Worker (it holds the custom domain) and re-upload the day files
   position among ranked players, NULL otherwise, so a visitor's list runs 1..N
   with no gap where a hidden or lapsed player sits) and `counts.players_ranked`.
   Only rows whose derived values actually moved are written. Called by every
-  upload that rated a game, by `setPrivateProfile`, by `rebase`, by
+  upload that rated a game, by `rebase`, by
   `ensureDerived` — and by `sweepActivityIfDue()`, which the ranking and player
   reads call: a player lapses because NOTHING happened, so no write can notice,
   and a stored `activity_swept_at` keeps that to one walk per

@@ -193,7 +193,7 @@ export interface RankHistoryRebuildResult {
  * descending" are the same list, and each header should still read naturally
  * on its own terms.
  */
-export const RANKING_SORTS = ["rank", "los", "rankChange", "losChange", "tier"] as const;
+export const RANKING_SORTS = ["board", "rank", "los", "rankChange", "losChange", "tier"] as const;
 export type RankingSort = (typeof RANKING_SORTS)[number];
 export type RankingDir = "asc" | "desc";
 
@@ -231,6 +231,9 @@ const RANKING_SORT_ORDERS: Record<
   losChange: { column: "los_change_7d", nullable: true, flip: false, defaultDir: "desc" },
   // The visitors' board: rank tier, then games played (see TIER_ORDER_BY).
   tier: { column: "tier", nullable: false, flip: false, defaultDir: "desc" },
+  // The default board: by rank tier, public profiles first within a tier (by
+  // LOS), then that tier's private ones (by games played). See BOARD_ORDER_BY.
+  board: { column: "tier", nullable: false, flip: false, defaultDir: "desc" },
 };
 
 /** The tier board's two keys, best first: higher tier, then more games. The
@@ -238,8 +241,23 @@ const RANKING_SORT_ORDERS: Record<
  * list answers both ways (idx_players_tier*). */
 const TIER_ORDER_BY = { desc: "ORDER BY tier DESC, games DESC, user_id", asc: "ORDER BY tier ASC, games ASC, user_id DESC" };
 
-/** The default view: the leaderboard, best first — what /api/ranking has always served. */
-const DEFAULT_RANKING_SORT: RankingSort = "rank";
+/**
+ * Within one tier, public profiles first, ordered by LOS, then the private ones
+ * ordered by games played — their LOS is not public, but their tier is what
+ * places them. One expression key covers both, since it is only ever compared
+ * between rows of the same private_profile. It must appear in the ORDER BY
+ * exactly as idx_players_board / idx_players_board_all declare it, or the
+ * planner sorts instead.
+ */
+const BOARD_KEY = "(CASE WHEN private_profile = 1 THEN -games ELSE -los END)";
+/** The board both ways; the ascending order is the exact reversal. */
+const BOARD_ORDER_BY = {
+  desc: `ORDER BY tier DESC, private_profile, ${BOARD_KEY}, user_id`,
+  asc: `ORDER BY tier ASC, private_profile DESC, ${BOARD_KEY} DESC, user_id DESC`,
+};
+
+/** The default view since 2026-11-21: the board (tiers, public first in each). */
+const DEFAULT_RANKING_SORT: RankingSort = "board";
 
 /** The ORDER BY for one sort, and the matching comparator for the search path
  * (which sorts its materialized matches in JS — see ranking). */
@@ -247,6 +265,7 @@ function rankingOrderBy(sort: RankingSort, dir: RankingDir): string {
   const spec = RANKING_SORT_ORDERS[sort];
   const desc = spec.flip ? dir === "asc" : dir === "desc";
   if (sort === "tier") return desc ? TIER_ORDER_BY.desc : TIER_ORDER_BY.asc;
+  if (sort === "board") return desc ? BOARD_ORDER_BY.desc : BOARD_ORDER_BY.asc;
   if (!spec.nullable) {
     // The exact reversal, tiebreak included, so one index answers both ways.
     return desc
@@ -264,6 +283,18 @@ function rankingComparator(
 ): (a: Record<string, SqlStorageValue>, b: Record<string, SqlStorageValue>) => number {
   const spec = RANKING_SORT_ORDERS[sort];
   const desc = spec.flip ? dir === "asc" : dir === "desc";
+  if (sort === "board") {
+    const key = (r: Record<string, SqlStorageValue>) => {
+      const priv = Number(r.private_profile) === 1 ? 1 : 0;
+      return [Number(r.tier ?? 0), priv, priv ? -Number(r.games) : -Number(r.los)];
+    };
+    return (a, b) => {
+      const [at, ap, ak] = key(a);
+      const [bt, bp, bk] = key(b);
+      const cmp = bt - at || ap - bp || ak - bk || Number(a.user_id) - Number(b.user_id);
+      return desc ? cmp : -cmp;
+    };
+  }
   if (sort === "tier") {
     const key = (r: Record<string, SqlStorageValue>) => [Number(r.tier ?? 0), Number(r.games)];
     return (a, b) => {
@@ -444,9 +475,20 @@ export interface PrivacyResult {
   userId: number;
   name: string;
   privateProfile: boolean;
-  /** False when the flag already had the requested value (the call was a no-op). */
+  /** False when the flag already had the requested value (the call was a no-op)
+   * or the change was refused. */
   changed: boolean;
+  /** Set (only on a self-service call) when making the profile private was
+   * refused because the player made it public too recently. */
+  refused?: "cooldown";
+  /** Until when (ms epoch) the player may not make their own profile private
+   * again; null when nothing stops them. Only on a self-service call. */
+  privateLockedUntil?: number | null;
 }
+
+/** How long after making their own profile public a player must wait before
+ * making it private again (self-service only; an admin is never held). */
+export const PRIVATE_AGAIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 interface WireGame {
   id: string;
@@ -684,6 +726,16 @@ export class LosDO extends DurableObject<LosEnv> {
       -- against owners and against targets), and the primary key only orders
       -- the owner side.
       CREATE INDEX IF NOT EXISTS idx_avoids_target ON avoids (avoid_key);
+      -- When a player last made their OWN profile public (setPrivateProfile
+      -- with self = true): making it private again is refused for
+      -- PRIVATE_AGAIN_COOLDOWN_MS after that, so a profile cannot be flicked
+      -- public and back. Its own table rather than a players column because a
+      -- rebase drops and recreates players rows, and /api/reset leaves it alone
+      -- like avoids.
+      CREATE TABLE IF NOT EXISTS privacy_changes (
+        user_id        INTEGER PRIMARY KEY,
+        made_public_at INTEGER NOT NULL
+      );
       -- Website login (src/auth.ts). Both tables are keyed on the SHA-256 of
       -- the token, never the token itself, so a copy of this database cannot
       -- be replayed as a login. auth_links are the one-time links the bot
@@ -854,6 +906,16 @@ export class LosDO extends DurableObject<LosEnv> {
       -- order, and a sort the admin can pick. Read backwards for ascending.
       CREATE INDEX IF NOT EXISTS idx_players_tier_ranked ON players (ranked, tier DESC, games DESC, user_id);
       CREATE INDEX IF NOT EXISTS idx_players_tier ON players (tier DESC, games DESC, user_id);
+      -- The default board (BOARD_ORDER_BY): the visitors' head is every ACTIVE
+      -- player, public and private, so it keys on inactive rather than ranked;
+      -- the admin's flat list has no leading key at all.
+      CREATE INDEX IF NOT EXISTS idx_players_board
+        ON players (inactive, tier DESC, private_profile, (CASE WHEN private_profile = 1 THEN -games ELSE -los END), user_id);
+      CREATE INDEX IF NOT EXISTS idx_players_board_all
+        ON players (tier DESC, private_profile, (CASE WHEN private_profile = 1 THEN -games ELSE -los END), user_id);
+      -- How many private profiles are active: the board's head is the ranked
+      -- count plus these, and they are a handful, so the count reads only them.
+      CREATE INDEX IF NOT EXISTS idx_players_private ON players (inactive) WHERE private_profile = 1;
     `);
   }
 
@@ -1730,32 +1792,131 @@ export class LosDO extends DurableObject<LosEnv> {
    * and the bot still balances on their real rating — they are simply off the
    * ranking and their player page serves no rating to a non-admin.
    *
-   * Ranks shift (they count public players only), so the leaderboard's
-   * materialized `rank` is refreshed in the same transaction as the flag and
-   * the maintained private count.
+   * No full rank walk: `rank` (the true position over everyone) does not
+   * depend on who is hidden, so only `public_rank` moves, and only for the
+   * ranked players below this one (moveInPublicRanking). That reads the ranked
+   * rows rather than every player, and writes one row per position shifted.
+   *
+   * `self` = the player changing their own profile (the player page's button):
+   * making it public records the time, and making it private again within
+   * PRIVATE_AGAIN_COOLDOWN_MS of that is refused (`refused: "cooldown"`). An
+   * admin is never held and records nothing.
    *
    * Returns null when no such player exists; a no-op toggle costs one read.
    */
-  async setPrivateProfile(userId: number, isPrivate: boolean): Promise<PrivacyResult | null> {
+  async setPrivateProfile(
+    userId: number,
+    isPrivate: boolean,
+    opts: { self?: boolean; now?: number } = {},
+  ): Promise<PrivacyResult | null> {
+    const self = opts.self === true;
+    const now = opts.now ?? Date.now();
     return this.ctx.storage.transactionSync(() => {
       const rows = [
-        ...this.sql.exec(`SELECT name, private_profile FROM players WHERE user_id = ?`, userId),
+        ...this.sql.exec(`SELECT name, private_profile, inactive, ranked FROM players WHERE user_id = ?`, userId),
       ];
       if (!rows.length) return null;
       const name = String(rows[0].name);
       const was = Number(rows[0].private_profile) === 1;
-      if (was === isPrivate) return { userId, name, privateProfile: isPrivate, changed: false };
+      // Recomputed after the change: making it public is what starts the clock.
+      const result = (privateProfile: boolean, changed: boolean): PrivacyResult => ({
+        userId,
+        name,
+        privateProfile,
+        changed,
+        ...(self ? { privateLockedUntil: this.privateLockedUntil(userId, now) } : {}),
+      });
+      if (was === isPrivate) return result(isPrivate, false);
+      if (self && isPrivate && this.privateLockedUntil(userId, now) != null) {
+        return { ...result(was, false), refused: "cooldown" };
+      }
+      const wasRanked = Number(rows[0].ranked);
+      const ranked = !isPrivate && Number(rows[0].inactive) === 0 ? 1 : 0;
       this.sql.exec(`UPDATE players SET private_profile = ? WHERE user_id = ?`, isPrivate ? 1 : 0, userId);
+      if (ranked !== wasRanked) this.moveInPublicRanking(userId, ranked === 1);
+      if (self && !isPrivate) {
+        this.sql.exec(
+          `INSERT INTO privacy_changes (user_id, made_public_at) VALUES (?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET made_public_at = excluded.made_public_at`,
+          userId,
+          now,
+        );
+      }
       this.forgetPrivateIds();
-      // Rewrites `ranked` for this row and every position below it, and the
-      // maintained ranked count with them.
-      const ranks = this.refreshRanks();
       console.log(
-        `LosDO: player ${userId} (${name}) profile is now ${isPrivate ? "PRIVATE" : "public"} ` +
-          `(${ranks} ranks rewritten)`,
+        `LosDO: player ${userId} (${name}) profile is now ${isPrivate ? "PRIVATE" : "public"}` +
+          (self ? " (by the player)" : ""),
       );
-      return { userId, name, privateProfile: isPrivate, changed: true };
+      return result(isPrivate, true);
     });
+  }
+
+  /**
+   * Take one player off the public leaderboard, or put them back on it, and
+   * keep everyone else's `public_rank` gapless — without the full refreshRanks
+   * walk. Only the RANKED rows are read (idx_players_ranked's `ranked = 1`
+   * range) and only the ones below the player are rewritten (one position
+   * each); `rank`, the true position over everyone, does not depend on who is
+   * hidden. The order is refreshRanks's: los DESC, then user_id.
+   */
+  private moveInPublicRanking(userId: number, toRanked: boolean): void {
+    if (!toRanked) {
+      const old = [...this.sql.exec(`SELECT public_rank FROM players WHERE user_id = ?`, userId)][0]?.public_rank;
+      this.sql.exec(`UPDATE players SET ranked = 0, public_rank = NULL WHERE user_id = ?`, userId);
+      if (old != null) {
+        this.sql.exec(
+          `UPDATE players SET public_rank = public_rank - 1 WHERE ranked = 1 AND public_rank > ?`,
+          Number(old),
+        );
+      }
+      this.sql.exec(`UPDATE counts SET n = n - 1 WHERE key = 'players_ranked'`);
+      return;
+    }
+    const me = [...this.sql.exec(`SELECT los FROM players WHERE user_id = ?`, userId)][0];
+    const los = Number(me.los);
+    const above = Number(
+      [
+        ...this.sql.exec(
+          `SELECT COUNT(*) AS n FROM players
+            WHERE ranked = 1 AND (los > ?1 OR (los = ?1 AND user_id < ?2))`,
+          los,
+          userId,
+        ),
+      ][0].n,
+    );
+    const place = above + 1;
+    this.sql.exec(
+      `UPDATE players SET public_rank = public_rank + 1 WHERE ranked = 1 AND public_rank >= ?`,
+      place,
+    );
+    this.sql.exec(`UPDATE players SET ranked = 1, public_rank = ? WHERE user_id = ?`, place, userId);
+    this.sql.exec(`UPDATE counts SET n = n + 1 WHERE key = 'players_ranked'`);
+  }
+
+  /** Until when a player may not make their own profile private again, or
+   * null when nothing stops them. */
+  private privateLockedUntil(userId: number, now: number): number | null {
+    const row = [
+      ...this.sql.exec(`SELECT made_public_at FROM privacy_changes WHERE user_id = ?`, userId),
+    ][0];
+    if (row == null) return null;
+    const until = Number(row.made_public_at) + PRIVATE_AGAIN_COOLDOWN_MS;
+    return until > now ? until : null;
+  }
+
+  /** A player's own privacy state, for the button on their player page.
+   * Null when they have no LOS row (nothing to hide). */
+  async ownPrivacy(userId: number, now = Date.now()) {
+    const row = [
+      ...this.sql.exec(`SELECT name, private_profile FROM players WHERE user_id = ?`, userId),
+    ][0];
+    if (row == null) return null;
+    return {
+      userId,
+      name: String(row.name),
+      privateProfile: Number(row.private_profile) === 1,
+      privateLockedUntil: this.privateLockedUntil(userId, now),
+    };
   }
 
   // -------------------------------------------------------- rank history
@@ -2609,6 +2770,21 @@ export class LosDO extends DurableObject<LosEnv> {
       // different index and read the table instead of the match.
       const matches = this.rankingRows([`name LIKE ?1 ESCAPE '\\'`], [needle], "");
       const order = rankingComparator(sort, dir);
+      if (sort === "board" && !includePrivate) {
+        // The board's halves are active / lapsed rather than ranked / not; a
+        // match carries no number (its place would need a count above it).
+        const head = matches.filter((r) => Number(r.inactive) === 0).sort(order);
+        const tail = matches.filter((r) => Number(r.inactive) === 1).sort(byRecency);
+        return {
+          ...meta,
+          total: matches.length,
+          rankedTotal: head.length,
+          players: head
+            .concat(tail)
+            .slice(offset, offset + perPage)
+            .map((r): WireRankedPlayer => ({ rank: null, ...boardWire(this.wirePlayerRow(r)) })),
+        };
+      }
       const listed = includePrivate
         ? matches.sort(order).map((r): WireRankedPlayer => ({
             rank: r.rank == null ? null : Number(r.rank),
@@ -2667,6 +2843,8 @@ export class LosDO extends DurableObject<LosEnv> {
     //
     // Both totals are maintained counts, so finding where one list ends and the
     // other begins costs no scan of the table.
+    if (sort === "board") return { ...meta, ...this.boardPage(orderBy, perPage, offset) };
+
     const rankedTotal = this.rankedPlayerCount();
     const total = this.count("players");
 
@@ -2711,6 +2889,45 @@ export class LosDO extends DurableObject<LosEnv> {
       }
     }
     return { ...meta, total, rankedTotal, players };
+  }
+
+  /**
+   * The public board (the default list): every ACTIVE player by rank tier, the
+   * public profiles first within a tier (by LOS), then that tier's private ones
+   * (by games played, their rating withheld but their tier shown, since it is
+   * what places them). Every one of them is numbered by their place on it.
+   * Then the lapsed players, most recently seen first, with no number — the
+   * same tail the other orders end in, minus the private profiles, which now
+   * sit in their tier. Head through idx_players_board, tail through
+   * idx_players_unranked; the head's size is the ranked count plus the active
+   * private profiles (a handful, counted through idx_players_private).
+   */
+  private boardPage(orderBy: string, perPage: number, offset: number) {
+    const privateActive = Number(
+      [...this.sql.exec(`SELECT COUNT(*) AS n FROM players WHERE private_profile = 1 AND inactive = 0`)][0].n,
+    );
+    const headTotal = this.rankedPlayerCount() + privateActive;
+    const total = this.count("players");
+    const players: WireRankedPlayer[] = [];
+    const take = Math.min(perPage, headTotal - offset);
+    if (take > 0) {
+      for (const r of this.rankingRows([], [], orderBy, take, offset, ["inactive = 0"])) {
+        players.push({ rank: offset + players.length + 1, ...boardWire(this.wirePlayerRow(r)) });
+      }
+    }
+    const want = perPage - players.length;
+    if (want > 0) {
+      const rows = this.rankingRows(
+        [],
+        [],
+        "ORDER BY last_played DESC, user_id",
+        want,
+        Math.max(0, offset - headTotal),
+        ["ranked = 0", "inactive = 1"],
+      );
+      for (const r of rows) players.push({ rank: null, ...boardWire(this.wirePlayerRow(r)) });
+    }
+    return { total, rankedTotal: headTotal, players };
   }
 
   /** One page of `players` for the ranking, always selecting the same columns. */
@@ -3299,6 +3516,18 @@ function redactRatedPlayer(p: WireRatedPlayer): Omit<WireRankedPlayer, "rank"> {
  * index materializes, applied here when the rows came back unordered. */
 function byLeaderboard(a: Record<string, SqlStorageValue>, b: Record<string, SqlStorageValue>): number {
   return Number(b.los) - Number(a.los) || Number(a.user_id) - Number(b.user_id);
+}
+
+/** Most recently seen first, ties by user_id — every rankless tail's order. */
+function byRecency(a: Record<string, SqlStorageValue>, b: Record<string, SqlStorageValue>): number {
+  return String(b.last_played).localeCompare(String(a.last_played)) || Number(a.user_id) - Number(b.user_id);
+}
+
+/** A row on the public board: a private profile loses its rating but keeps its
+ * tier, which is what places it there. */
+function boardWire(p: WireRatedPlayer): Omit<WireRankedPlayer, "rank"> {
+  // No position movement either: it is the LOS leaderboard's, not the board's.
+  return p.privateProfile ? { ...redactRatedPlayer(p), tier: p.tier, rankChange7d: null } : p;
 }
 
 /** The public ranking's order over a set of rows: the ranked ones in the

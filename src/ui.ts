@@ -126,6 +126,8 @@ const STYLES = /* css */ `
   /* Admin-only table column (the games and ranking tables' row menus): same switch. */
   th.admin-col, td.admin-col { display: none; }
   body.admin-mode th.admin-col, body.admin-mode td.admin-col { display: table-cell; }
+  /* The ranking's row-menu column for a logged-in player: only their own row has a button. */
+  body.own-menu th.admin-col.rowacts, body.own-menu td.admin-col.rowacts { display: table-cell; }
 
   /* ---- Admin row menu (the ranking's player actions and the games table's
      game actions, both in the admin-col) ---- */
@@ -222,6 +224,17 @@ const STYLES = /* css */ `
   .private-note { padding: 22px 16px; text-align: center; color: #9aa3ad; }
   .private-note .lock { display: block; font-size: 26px; margin-bottom: 8px; }
   .private-note .sub { display: block; margin-top: 6px; font-size: 12px; color: #6b7480; }
+  /* The logged-in player's own privacy switch, above their profile. */
+  .own-privacy { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap; padding: 10px 16px; font-size: 13px; color: #c7ccd1; }
+  .own-privacy .sub { display: block; margin-top: 2px; font-size: 12px; color: #79818c; }
+  .own-privacy button {
+    cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+    padding: 6px 12px; border-radius: 6px;
+    border: 1px solid #34567f; background: #26436b; color: #eaf1fb;
+  }
+  .own-privacy button:hover { background: #2d4f7c; }
+  .own-privacy button:disabled { cursor: default; opacity: .5; background: #22272f; border-color: #2c323b; color: #9aa3ad; }
   .shell > .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   /* Narrow screens: the sidebar becomes a horizontal bar above the content. */
   @media (max-width: 700px) {
@@ -1612,9 +1625,9 @@ function teamsOf(l) {
 // needs every player's mu/sigma, not just the shown LOS). The local computation is
 // the fallback for a response without stats (then there is no win probability).
 function teamAvg(players, stat) {
-  // LOS is admin-only: a visitor's response carries no averages (and no LOS to
-  // average), only the win chance.
-  if (!ADMIN_MODE) {
+  // With LOS not public (LOS_PUBLIC false) a visitor's response carries no
+  // averages (and no LOS to average), only the win chance.
+  if (!SHOW_LOS) {
     if (!players.length) return null;
     return { exact: null, winProb: stat && stat.winProb != null ? stat.winProb : null };
   }
@@ -1712,6 +1725,12 @@ document.querySelectorAll("a.viewall").forEach((a) => a.setAttribute("href", "/l
 // so navigating keeps it with nothing carried in the links. It only reveals —
 // the admin routes check the cookie themselves.
 const ADMIN_MODE = /*ADMIN_MODE*/false;
+// LOS is public (again, since 2026-11-21): everyone sees the ratings, the LOS
+// leaderboard and the chart, except on a private profile, which the API
+// redacts. Mirrors LOS_PUBLIC in src/los/tiers.ts; false brings back the
+// tier-only visitor view (src/los/tiers.ts stripLos).
+const LOS_PUBLIC = true;
+const SHOW_LOS = ADMIN_MODE || LOS_PUBLIC;
 document.body.classList.toggle("admin-mode", ADMIN_MODE);
 
 // The header's top-right corner: who is logged in (their name, linking to
@@ -1881,7 +1900,7 @@ function fmtDur(ms) {
 // between a 7-man mean here and an 8-man mean elsewhere would give the hidden
 // rating away exactly. The local fallback is for a response predating the field.
 function teamAvgLos(g, i) {
-  if (!ADMIN_MODE) return null; // LOS is admin-only; a visitor's games carry none
+  if (!SHOW_LOS) return null; // LOS not public: a visitor's games carry none
   const served = g.avgLosBefore;
   if (served && served[i] !== undefined) return served[i];
   const vals = (g.teams[i] || []).map((p) => p.losBefore).filter((v) => v != null);
@@ -1890,9 +1909,9 @@ function teamAvgLos(g, i) {
 }
 // Strongest first, so a truncated roster shows the names that matter.
 function byLosDesc(team) {
-  // A visitor's roster carries no LOS, but the API serves each team already in
+  // With LOS not public a visitor's roster carries none, but the API serves each team already in
   // LOS order, so a visitor keeps that order as it came.
-  if (!ADMIN_MODE) return team.slice();
+  if (!SHOW_LOS) return team.slice();
   const key = (p) => (p.losBefore ?? -1);
   return team.slice().sort((a, b) => key(b) - key(a) || a.name.localeCompare(b.name));
 }
@@ -2256,6 +2275,71 @@ function noticeDialog(opts) {
   });
 }
 
+// ---- A logged-in player's own profile privacy (player page bar, ranking row menu) ----
+// Asks first, then POSTs /api/me/privacy. Making the profile public starts a
+// one-day wait before it can be made private again (the server enforces it; a
+// refusal is explained here). Resolves to the server's answer when the change
+// went through, null otherwise (cancelled, refused or failed — each already
+// told to the player).
+function fmtLocalTime(ms) {
+  return new Date(ms).toLocaleString(undefined, {
+    weekday: "short", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+async function changeOwnPrivacy(makePrivate) {
+  const ok = await confirmDialog(makePrivate
+    ? {
+        title: "Make your profile private?",
+        message: "Other players will no longer see your rank tier, your rating history or your " +
+          "place on the ranking: you move to the end of the ranking with no position. Your games " +
+          "stay listed, and the bot keeps balancing teams with your real rating. You can make " +
+          "your profile public again at any time.",
+        confirmLabel: "Make private",
+      }
+    : {
+        title: "Make your profile public?",
+        message: "Everyone will see your rank tier, your rating history and your place on the " +
+          "ranking. After this you cannot make your profile private again for 1 day.",
+        confirmLabel: "Make public",
+      });
+  if (!ok) return null;
+  try {
+    const res = await fetch("/api/me/privacy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ private: makePrivate }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409 && data.privateLockedUntil) {
+      await noticeDialog({
+        title: "Not yet",
+        message: "You made your profile public less than a day ago. You can make it private again after " +
+          fmtLocalTime(data.privateLockedUntil) + ".",
+        tone: "error",
+      });
+      return null;
+    }
+    if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
+    return data;
+  } catch (e) {
+    await noticeDialog({ title: "Could not change your profile", message: e.message, tone: "error" });
+    return null;
+  }
+}
+
+/** The logged-in player's own privacy state ({privateProfile, privateLockedUntil, …}),
+ * or null (logged out, no rated games, or the request failed). */
+async function fetchOwnPrivacy() {
+  if (!storedAuthUser()) return null;
+  try {
+    const res = await fetch("/api/me/privacy", { headers: { accept: "application/json" } });
+    return res.ok ? await res.json() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /** POST JSON and read the answer, turning a non-2xx into the error it carries. */
 async function postJson(path, body) {
   const res = await fetch(path, {
@@ -2310,6 +2394,7 @@ function openRowMenu(btn) {
     item.type = "button";
     item.textContent = a.label;
     if (a.title) item.title = a.title;
+    if (a.disabled) item.disabled = true;
     item.onclick = () => a.onClick(item, btn);
     panel.appendChild(item);
   }
@@ -2634,8 +2719,10 @@ function lobbyRank(p) {
 }
 
 function ratingPill(p) {
-  if (!ADMIN_MODE) return lobbyRank(p);
-  return (p.tier ? rankBadge(p.tier, p.losGames || 0, { size: 24 }) : '') + losPillOf(p);
+  if (!SHOW_LOS) return lobbyRank(p);
+  // Never rated = Placing 0/5 (the server says so too); a private one shows none.
+  const tier = p.tier || (p.losPrivate ? null : "placing");
+  return (tier ? rankBadge(tier, p.losGames || 0, { size: 24 }) : '') + losPillOf(p);
 }
 
 function losPillOf(p) {
@@ -2689,9 +2776,9 @@ function partyIndex(l) {
 // has no displayed value to sort on and goes last — sorting them by the hidden
 // number would put it back on screen as a position.
 function byLosDescLobby(players) {
-  // A visitor has no LOS, but each player carries their place in the lobby by
+  // With LOS not public a visitor has none, but each player carries their place in the lobby by
   // it (losOrder, the same order this sorts an admin's by).
-  if (!ADMIN_MODE) return players.slice().sort((a, b) => (a.losOrder ?? 0) - (b.losOrder ?? 0));
+  if (!SHOW_LOS) return players.slice().sort((a, b) => (a.losOrder ?? 0) - (b.losOrder ?? 0));
   const key = (p) => { const v = displayedLos(p); return v == null ? -Infinity : v; };
   return players.slice().sort((a, b) => key(b) - key(a) || a.name.localeCompare(b.name));
 }
@@ -2747,7 +2834,7 @@ function teamTable(label, players, showAvg, stat, cls, parties, palette) {
       (showAvg ? teamAvgBadge(players, stat) : '') + '</h3>' +
     '<table>' +
     '<thead><tr><th class="ready"></th><th class="skill">OS</th>' +
-    '<th class="name">Player</th><th class="party"></th><th class="rating">' + (ADMIN_MODE ? 'LOS' : 'Rank') + '</th>' +
+    '<th class="name">Player</th><th class="party"></th><th class="rating">' + (SHOW_LOS ? 'LOS' : 'Rank') + '</th>' +
     '<th class="games" title="rated lava games played">Games</th></tr></thead>' +
     '<tbody>' +
     players.map((p, i) => playerRow(p, parties, palette ? palette[i % palette.length] : null)).join("") +
@@ -3152,9 +3239,10 @@ let requestSeq = 0; // stale-response guard: only the latest request may render
 // rating, biggest gain. Clicking the column already sorted flips it instead.
 // A visitor's list is only ever the TIER board (tier, then games played): every
 // other order is the hidden LOS's, and the API ignores a visitor's ?sort= anyway.
-const SORTS = ADMIN_MODE ? ["rank", "rankChange", "los", "losChange", "tier"] : ["tier"];
-const SORT_DEFAULT_DIR = { rank: "asc", los: "desc", rankChange: "desc", losChange: "desc", tier: "desc" };
-const DEFAULT_SORT = ADMIN_MODE ? "rank" : "tier";
+// "board" (the default): rank tiers, each tier's public profiles by LOS, then its private ones by games.
+const SORTS = SHOW_LOS ? ["board", "rank", "rankChange", "los", "losChange", "tier"] : ["tier"];
+const SORT_DEFAULT_DIR = { board: "desc", rank: "asc", los: "desc", rankChange: "desc", losChange: "desc", tier: "desc" };
+const DEFAULT_SORT = SHOW_LOS ? "board" : "tier";
 
 function sortFromUrl() {
   const key = PAGE_PARAMS.get("sort");
@@ -3221,7 +3309,7 @@ function changeMark(v, decimals, what) {
 function rankText(p) {
   // A visitor's search match is ranked but carries no number (its place on the
   // tier board would need a count of everyone above it): blank, not a dash.
-  if (p.rank == null && !ADMIN_MODE && !p.privateProfile && !p.inactive) return "";
+  if (p.rank == null && !SHOW_LOS && !p.privateProfile && !p.inactive) return "";
   return p.rank == null ? '<span class="muted">–</span>' : String(p.rank);
 }
 
@@ -3265,7 +3353,16 @@ function losPill(p) {
     : '<span class="pill ' + ratingClass(p.los) + '">' + fmtLos(p.los) + '</span>');
 }
 
+// An admin gets the menu on every row; a logged-in player only on their own
+// (the column is shown for them by body.own-menu, see OWN_USER below).
 function rowActionsCell(p) {
+  if (!ADMIN_MODE) {
+    if (!OWN_USER || p.userId !== OWN_USER.userId) return '<td class="admin-col rowacts"></td>';
+    return rowMenuCell(
+      { id: p.userId, name: p.name, private: p.privateProfile ? "1" : "0", own: "1" },
+      "Your profile",
+    );
+  }
   return rowMenuCell(
     { id: p.userId, name: p.name, private: p.privateProfile ? "1" : "0" },
     "Player actions",
@@ -3279,7 +3376,7 @@ function rankRow(p, columns) {
   const cells = columns
     .map((col) => '<td class="col-' + col.key + (col.td ? " " + col.td : "") + '">' + col.cell(p) + '</td>')
     .join("");
-  const unranked = ADMIN_MODE ? p.rank == null : !!(p.privateProfile || p.inactive);
+  const unranked = SHOW_LOS ? p.rank == null : !!(p.privateProfile || p.inactive);
   return '<tr' + (unranked ? ' class="unranked"' : '') + '>' +
     cells + rowActionsCell(p) + '</tr>';
 }
@@ -3296,13 +3393,22 @@ function rankRow(p, columns) {
 // the thing they moved. Described rather than written out as markup because a
 // header is a control: the sort key is what makes one clickable, and the same
 // list gives the colspan the empty-state message needs.
+// The two "\u0394 (7d)" movement columns are hidden from the table (2026-11-21).
+// The API still serves rankChange7d/losChange7d and both sorts; true here
+// brings the columns back.
+const SHOW_CHANGES = false;
+
 function tableColumns() {
+  return allTableColumns().filter((col) => SHOW_CHANGES || (col.key !== "rankchg" && col.key !== "loschg"));
+}
+
+function allTableColumns() {
   const over = " over the last " + CHANGE_DAYS + " days";
   // A visitor's "#" is the place on the tier board the list is in, so it is
   // not a sort of its own and has no movement column: both would be the LOS
   // order again. The admin keeps the leaderboard and both movements, with the
   // tier board one click away on the Rank column.
-  if (!ADMIN_MODE) {
+  if (!SHOW_LOS) {
     return [
       { key: "rank", th: "num rankhead", td: "rankno", label: "#", cell: rankText },
       { key: "player", td: "name", label: "Player", cell: nameCell },
@@ -3316,8 +3422,8 @@ function tableColumns() {
     { key: "rankchg", th: "chgcol", td: "chgcol", label: "\u0394 (7d)", sort: "rankChange",
       title: "Positions gained or lost" + over, cell: moveMark },
     { key: "player", td: "name", label: "Player", cell: nameCell },
-    { key: "tier", th: "rating", td: "rating", label: "Rank", sort: "tier",
-      title: "Rank, then games played", cell: tierCell },
+    { key: "tier", th: "rating", td: "rating", label: "Rank", sort: "board",
+      title: "Rank tier: public profiles by LOS, then private ones by games played", cell: tierCell },
     { key: "los", th: "rating", td: "rating", label: "LOS", sort: "los", cell: losPill },
     { key: "loschg", th: "chgcol", td: "chgcol", label: "\u0394 (7d)", sort: "losChange",
       title: "LOS gained or lost" + over, cell: (p) => changeMark(p.losChange7d, 1, "LOS") },
@@ -3367,6 +3473,29 @@ rowMenuActions = (btn) => {
   const userId = Number(btn.getAttribute("data-id"));
   const name = btn.getAttribute("data-name") || String(userId);
   const isPrivate = btn.getAttribute("data-private") === "1";
+  if (btn.getAttribute("data-own") === "1") {
+    // The player's own row: the same change as the button on their player
+    // page, with the same dialogs and the same one-day wait after going public.
+    const lockedUntil = !isPrivate && ownPrivacy ? ownPrivacy.privateLockedUntil : null;
+    return [
+      {
+        label: isPrivate ? "\uD83D\uDD13 Make public" : "\uD83D\uDD12 Make private",
+        title: lockedUntil
+          ? "You made your profile public recently; you can make it private again after " +
+            fmtLocalTime(lockedUntil)
+          : isPrivate
+            ? "Show your rank tier and your place on the ranking again"
+            : "Hide your rank tier and take you off the ranking",
+        disabled: !!lockedUntil,
+        onClick: async () => {
+          closeRowMenu();
+          const data = await changeOwnPrivacy(!isPrivate);
+          ownPrivacy = await fetchOwnPrivacy();
+          if (data) refresh(true);
+        },
+      },
+    ];
+  }
   return [
     {
       label: isPrivate ? "\uD83D\uDD13 Make public" : "\uD83D\uDD12 Make private",
@@ -3489,15 +3618,27 @@ const perSelect = document.getElementById("pgPer");
 perSelect.value = String(perPage);
 perSelect.onchange = () => { perPage = Number(perSelect.value); page = 1; refresh(); };
 
-async function refresh() {
+// The logged-in player (from localStorage, like the header), whose own row
+// carries the row menu; their privacy state decides whether "Make private" is
+// still waiting out the day after going public.
+const OWN_USER = ADMIN_MODE ? null : storedAuthUser();
+let ownPrivacy = null;
+if (OWN_USER) {
+  document.body.classList.add("own-menu");
+  fetchOwnPrivacy().then((st) => { ownPrivacy = st; });
+}
+
+async function refresh(fresh) {
   const meta = document.getElementById("meta");
   const seq = ++requestSeq;
   try {
     // withAdmin: in admin mode the hidden profiles are listed too, marked with
-    // the "private" badge and toggleable from the row menu.
+    // the "private" badge and toggleable from the row menu. fresh (after the
+    // player changed their own profile) asks past the 60s edge cache.
     const url = withAdmin("/api/ranking?page=" + page + "&perPage=" + perPage +
       "&sort=" + sort + "&dir=" + dir +
-      (query ? "&q=" + encodeURIComponent(query) : ""));
+      (query ? "&q=" + encodeURIComponent(query) : "") +
+      (fresh ? "&fresh=" + Date.now() : ""));
     const res = await fetch(url, { headers: { accept: "application/json" } });
     if (seq !== requestSeq) return; // a newer request is in flight; drop this one
     if (!res.ok) throw new Error("HTTP " + res.status);
@@ -3601,8 +3742,8 @@ function profileCard(p) {
         fmtLos(p.los) + '</span>') +
     '</div>' +
     '<div class="stats">' +
-      // The leaderboard position is the LOS order, so only an admin sees it.
-      (ADMIN_MODE ? stat("Rank", rank) : "") +
+      // The leaderboard position is the LOS order: shown whenever LOS is.
+      (SHOW_LOS ? stat("Rank", rank) : "") +
       stat("Games", String(p.games)) +
       stat("W–L", '<span class="res-w">' + p.wins + '</span><span class="muted">–</span>' +
         '<span class="res-l">' + p.losses + '</span> <span class="muted">(' + winRate + ')</span>') +
@@ -3955,9 +4096,9 @@ function gameRow(g) {
       (g.losDelta >= 0 ? "+" : "") + g.losDelta.toFixed(2) + '</span>';
   // Their rank going into the game: the emblem alone for a visitor, beside the
   // LOS pill for an admin.
-  const rank = g.tier ? rankBadge(g.tier, g.gameNumber != null ? g.gameNumber - 1 : 0, { size: ADMIN_MODE ? 24 : 30 }) : '';
+  const rank = g.tier ? rankBadge(g.tier, g.gameNumber != null ? g.gameNumber - 1 : 0, { size: SHOW_LOS ? 24 : 30 }) : '';
   const losCells = hideLos ? ''
-    : ADMIN_MODE ? '<td class="rating">' + rank + before + '</td><td class="delta">' + delta + '</td>'
+    : SHOW_LOS ? '<td class="rating">' + rank + before + '</td><td class="delta">' + delta + '</td>'
     : '<td class="rating">' + (rank || '<span class="muted">–</span>') + '</td>';
   return '<tr class="game-row" data-href="' + esc(gameHref(g.id)) + '">' +
     '<td class="when">' + rowLink(gameHref(g.id), fmtWhen(g.startTime)) + '</td>' +
@@ -3975,9 +4116,9 @@ function renderGames(data) {
   totalPages = Math.max(1, Math.ceil(data.total / data.perPage));
   const games = data.games.map(gameRow).join("");
   const losHeaders = hideLos ? ''
-    : ADMIN_MODE ? '<th class="rating">LOS before</th><th class="num">Δ LOS</th>'
+    : SHOW_LOS ? '<th class="rating">LOS before</th><th class="num">Δ LOS</th>'
     : '<th class="rating" title="rank going into the game">Rank</th>';
-  const cols = hideLos ? 6 : ADMIN_MODE ? 8 : 7;
+  const cols = hideLos ? 6 : SHOW_LOS ? 8 : 7;
   document.getElementById("gamesCard").innerHTML =
     '<h2>🎮 Games <span class="sub">' + data.total + ' game' + (data.total === 1 ? "" : "s") +
       (hideLos ? ' · ratings hidden' : '') + '</span></h2>' +
@@ -4100,16 +4241,18 @@ function privateNote(p) {
 
 function renderPrivate(p) {
   document.getElementById("root").innerHTML =
+    '<div id="ownPrivacy"></div>' +
     privateNote(p) +
     '<div class="card wide" id="gamesCard"><div class="empty">loading…</div></div>';
+  renderOwnPrivacy();
   loadGames();
 }
 
 function render(p, history, style) {
   chartPoints = history.points;
   chartTimes = chartPoints.map((pt) => Date.parse(pt.startTime));
-  // The LOS chart is admin-only, like LOS itself.
-  const chart = !ADMIN_MODE ? '' :
+  // The LOS chart is shown whenever LOS is (LOS_PUBLIC).
+  const chart = !SHOW_LOS ? '' :
     '<div class="card">' +
       '<h2>📈 LOS over time <span class="sub">' + chartPoints.length +
         ' rated games · dot color = result</span></h2>' +
@@ -4125,15 +4268,71 @@ function render(p, history, style) {
       '</div></div>' +
     '</div>';
   document.getElementById("root").innerHTML =
+    '<div id="ownPrivacy"></div>' +
     profileCard(p) +
     (style ? playStyleCard(style) : "") +
     chart +
     '<div class="card wide" id="gamesCard"><div class="empty">loading…</div></div>';
-  if (ADMIN_MODE) wireChartHover(); // also applies the persisted axis mode and draws
+  renderOwnPrivacy();
+  if (SHOW_LOS) wireChartHover(); // also applies the persisted axis mode and draws
   loadGames();
 }
 
-async function load() {
+// ---- The player's own privacy switch (only on their own page, logged in) ----
+// Drawn above whatever the page shows, from /api/me/privacy (no-store, so it
+// is never the edge-cached state). Making the profile public starts a one-day
+// wait before it can be made private again; the server enforces that, the
+// button only says so.
+let ownPrivacyState = null;
+
+function renderOwnPrivacy() {
+  const el = document.getElementById("ownPrivacy");
+  const st = ownPrivacyState;
+  if (!el) return;
+  if (!st) { el.innerHTML = ""; return; }
+  const locked = !st.privateProfile && st.privateLockedUntil != null;
+  const line = st.privateProfile
+    ? '\uD83D\uDD12 Your profile is <strong>private</strong>.' +
+      '<span class="sub">Other players cannot see your rank tier or rating history.</span>'
+    : '\uD83C\uDF10 Your profile is <strong>public</strong>.' +
+      (locked
+        ? '<span class="sub">You made it public recently, so you can make it private again after ' +
+          esc(fmtLocalTime(st.privateLockedUntil)) + '.</span>'
+        : '<span class="sub">Everyone can see your rank tier and your place on the ranking.</span>');
+  el.innerHTML = '<div class="card wide"><div class="own-privacy"><div>' + line + '</div>' +
+    '<button type="button" id="ownPrivacyBtn"' + (locked ? ' disabled' : '') + '>' +
+    (st.privateProfile ? 'Make public' : 'Make private') + '</button></div></div>';
+  document.getElementById("ownPrivacyBtn").onclick = toggleOwnPrivacy;
+}
+
+async function toggleOwnPrivacy() {
+  const st = ownPrivacyState;
+  if (!st) return;
+  const data = await changeOwnPrivacy(!st.privateProfile);
+  // Refused or failed: re-read the state (a refusal means the wait is on).
+  if (!data) {
+    ownPrivacyState = (await fetchOwnPrivacy()) || st;
+    renderOwnPrivacy();
+    return;
+  }
+  ownPrivacyState = {
+    userId: data.userId,
+    name: data.name,
+    privateProfile: data.privateProfile,
+    privateLockedUntil: data.privateLockedUntil == null ? null : data.privateLockedUntil,
+  };
+  // Re-read the profile past the edge cache, so the page matches at once.
+  load(true);
+}
+
+async function loadOwnPrivacy() {
+  const me = storedAuthUser();
+  if (!me || me.userId !== USER_ID) return;
+  ownPrivacyState = await fetchOwnPrivacy();
+  renderOwnPrivacy();
+}
+
+async function load(fresh) {
   const meta = document.getElementById("meta");
   const root = document.getElementById("root");
   if (!Number.isFinite(USER_ID)) {
@@ -4141,10 +4340,12 @@ async function load() {
     root.innerHTML = '<div class="error">Invalid player id.</div>';
     return;
   }
+  // After the owner changes their privacy: a URL the edge cache has not seen.
+  const bust = fresh ? (ADMIN_MODE ? "&" : "?") + "fresh=" + Date.now() : "";
   try {
     const [pRes, hRes, style] = await Promise.all([
-      fetch(withAdmin("/api/players/" + USER_ID), { headers: { accept: "application/json" } }),
-      fetch(withAdmin("/api/players/" + USER_ID + "/history"),
+      fetch(withAdmin("/api/players/" + USER_ID) + bust, { headers: { accept: "application/json" } }),
+      fetch(withAdmin("/api/players/" + USER_ID + "/history") + bust,
         { headers: { accept: "application/json" } }),
       loadPlayStyle(),
     ]);
@@ -4175,6 +4376,7 @@ async function load() {
 }
 
 load();
+loadOwnPrivacy();
 </script>
 </body>
 </html>`;
@@ -4217,7 +4419,7 @@ function gameRow(g) {
   return '<tr class="game-row" data-href="' + esc(gameHref(g.id)) + '">' +
     '<td class="when">' + rowLink(gameHref(g.id), fmtWhen(g.startTime)) + '</td>' +
     '<td class="dur">' + esc(fmtDur(g.durationMs)) + '</td>' +
-    (ADMIN_MODE ? '<td class="los">' + losCell(g) + '</td>' : '') +
+    (SHOW_LOS ? '<td class="los">' + losCell(g) + '</td>' : '') +
     '<td class="num pct">' + winChanceCell(g, g.winnerTeam) + '</td>' +
     '<td class="roster">' + rostersCell(g, null) + '</td>' +
     linksCell(g) +
@@ -4386,11 +4588,11 @@ function renderGames(data) {
   closeRowMenu(); // the rows it hung off are about to be replaced
   document.getElementById("root").innerHTML =
     '<div class="card wide">' +
-    '<h2>🎮 Games <span class="sub">lava lobby games' + (ADMIN_MODE ? ' · LOS = team average before the game, gold ring = winner' : '') + '</span></h2>' +
+    '<h2>🎮 Games <span class="sub">lava lobby games' + (SHOW_LOS ? ' · LOS = team average before the game, gold ring = winner' : '') + '</span></h2>' +
     noteBar() +
     pagerBar(data, totalPages, perPage) +
     '<table class="games-table">' +
-    '<thead><tr><th>Started</th><th>Duration</th>' + (ADMIN_MODE ? '<th class="los">LOS</th>' : '') +
+    '<thead><tr><th>Started</th><th>Duration</th>' + (SHOW_LOS ? '<th class="los">LOS</th>' : '') +
     winChanceHeader("%", "Win chance of the team that won, predicted before the game from the ratings of everyone playing.") +
     '<th>Players</th><th class="links">Links</th><th class="admin-col rowacts"></th></tr></thead>' +
     '<tbody id="rows">' + (rows || '<tr><td colspan="7" class="empty">no games yet</td></tr>') +
@@ -4500,7 +4702,7 @@ function playerRow(p, team, tint, parties) {
   // the tooltip), beside the LOS pill for an admin.
   const games = p.gameNumber != null ? p.gameNumber - 1 : 0;
   const rank = p.privateProfile ? privateDash()
-    : p.tier ? rankBadge(p.tier, games, { size: ADMIN_MODE ? 24 : 30 })
+    : p.tier ? rankBadge(p.tier, games, { size: SHOW_LOS ? 24 : 30 })
     : '<span class="muted">–</span>';
   return '<tr>' +
     '<td class="name"><a class="pname tc' + team + '"' + (tint ? ' style="color:' + tint + '"' : '') +
@@ -4508,7 +4710,7 @@ function playerRow(p, team, tint, parties) {
       (p.faction ? '<span class="faction">' + esc(p.faction) + '</span>' : '') +
     '</td>' +
     '<td class="party">' + partyPill(p, parties) + '</td>' +
-    (ADMIN_MODE
+    (SHOW_LOS
       ? '<td class="rating">' + (p.tier && !p.privateProfile ? rank : '') + before + '</td>' +
         '<td class="delta">' + deltaTxt(p.losDelta) + after + '</td>'
       : '<td class="rating">' + rank + '</td>') +
@@ -4553,7 +4755,7 @@ function teamTable(g, i, parties) {
     '<h3><span class="who"><span class="tname tc' + i + '">Team ' + (i + 1) + '</span>' +
       (won ? '<span class="badge won">🏆 won</span>' : '') + '</span>' + avgPill + '</h3>' +
     '<table><thead><tr><th>Player</th><th class="party"></th>' +
-    (ADMIN_MODE ? '<th class="rating">LOS before</th><th class="num">Δ LOS</th>'
+    (SHOW_LOS ? '<th class="rating">LOS before</th><th class="num">Δ LOS</th>'
       : '<th class="rating" title="rank going into this game">Rank</th>') +
     '<th class="num games">Games</th></tr></thead>' +
     '<tbody>' + (team.map((p, j) => playerRow(p, i, teamTint(i, j), parties)).join("") ||
@@ -4602,7 +4804,7 @@ function facts(g) {
   // rating note; a plain rated one is the normal case. Same badge the list
   // draws (gameBadges, SHARED_JS).
   const badge = gameBadges(g);
-  const rated = badge ? stat(ADMIN_MODE ? "LOS" : "Rating", badge, true) : "";
+  const rated = badge ? stat(SHOW_LOS ? "LOS" : "Rating", badge, true) : "";
   const links = '<span class="ext">' +
     '<a href="' + esc(otlHref(g.id)) + '" target="_blank" rel="noopener noreferrer">OTL</a>' +
     '<a href="' + esc(barHref(g.id)) + '" target="_blank" rel="noopener noreferrer">BAR</a>' +

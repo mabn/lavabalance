@@ -32,7 +32,7 @@ import {
   validToken,
   type AuthUser,
 } from "./auth";
-import { botAccessConfigured, botIdentity } from "./access";
+import { adminRequest, botAccessConfigured, botIdentity } from "./access";
 import { losStub } from "./los";
 
 type C = Context<{ Bindings: Env }>;
@@ -166,4 +166,44 @@ authApp.post("/api/auth/logout", async (c) => {
   const token = sessionTokenFrom(c.req.header("cookie"));
   if (token) await losStub(c.env).deleteSession(await hashToken(token));
   return c.json({ ok: true }, 200, { ...NO_STORE, "Set-Cookie": clearedSessionCookie() });
+});
+
+// ------------------------------------------------------------ own profile
+
+// The logged-in player's own privacy state — what the button on their player
+// page shows. 401 when not logged in, 404 when LOS has no row for them.
+authApp.get("/api/me/privacy", async (c) => {
+  const user = await currentUser(c);
+  if (!user) return c.json({ error: "not logged in", login: "/login" }, 401, NO_STORE);
+  const state = await losStub(c.env).ownPrivacy(user.userId);
+  if (!state) return fail(c, "you have no rated games yet", 404);
+  // An admin is never held by the wait (see the POST below).
+  if ((await adminRequest(c.env, c.req.raw)) !== null) state.privateLockedUntil = null;
+  return c.json(state, 200, NO_STORE);
+});
+
+// Make your OWN profile private or public. Body {"private": true|false}.
+// Making it public starts a one-day cooldown during which it cannot be made
+// private again (409 with `privateLockedUntil`); an admin is never held. Only ever the session's own
+// account: there is no user id in the request to change.
+authApp.post("/api/me/privacy", async (c) => {
+  if (!sameOrigin(c.req.header("origin"), c.req.url)) return fail(c, "cross-site request refused", 403);
+  const user = await currentUser(c);
+  if (!user) return c.json({ error: "not logged in", login: "/login" }, 401, NO_STORE);
+  const body = (await c.req.json().catch(() => null)) as { private?: unknown } | null;
+  const wanted = body?.private;
+  if (typeof wanted !== "boolean") return fail(c, 'body must be {"private": true|false}', 400);
+  // A signed-in admin changing their own profile is an admin change: no wait,
+  // and none started.
+  const admin = (await adminRequest(c.env, c.req.raw)) !== null;
+  const result = await losStub(c.env).setPrivateProfile(user.userId, wanted, { self: !admin });
+  if (!result) return fail(c, "you have no rated games yet", 404);
+  if (result.refused === "cooldown") {
+    return c.json(
+      { ...result, error: "you made your profile public less than a day ago; try again later" },
+      409,
+      NO_STORE,
+    );
+  }
+  return c.json(result, 200, NO_STORE);
 });

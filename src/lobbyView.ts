@@ -159,8 +159,9 @@ export function finalizeLobby<L extends LosLobby>(
       // Tells the page a null `los` means "withheld", not "never rated" — the
       // two look nothing alike to a reader and must not render the same.
       losPrivate: hide,
-      // What a visitor who is not an admin sees in place of `los`.
-      tier: r && !hide ? (r.tier ?? tierOf(shownLos(r), r.games)) : null,
+      // The rank tier. A player with no rated game yet is Placing too (0 of
+      // its games), like anyone under PLACING_GAMES; only a private one has none.
+      tier: hide ? null : r ? (r.tier ?? tierOf(shownLos(r), r.games)) : "placing",
     };
   });
   // Each player's place in the lobby by the DISPLAYED LOS (strongest = 0; the
