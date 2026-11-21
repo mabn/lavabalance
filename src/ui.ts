@@ -3391,7 +3391,16 @@ function rankRow(p, columns) {
 // the thing they moved. Described rather than written out as markup because a
 // header is a control: the sort key is what makes one clickable, and the same
 // list gives the colspan the empty-state message needs.
+// The two "\u0394 (7d)" movement columns are hidden from the table (2026-11-21).
+// The API still serves rankChange7d/losChange7d and both sorts; true here
+// brings the columns back.
+const SHOW_CHANGES = false;
+
 function tableColumns() {
+  return allTableColumns().filter((col) => SHOW_CHANGES || (col.key !== "rankchg" && col.key !== "loschg"));
+}
+
+function allTableColumns() {
   const over = " over the last " + CHANGE_DAYS + " days";
   // A visitor's "#" is the place on the tier board the list is in, so it is
   // not a sort of its own and has no movement column: both would be the LOS

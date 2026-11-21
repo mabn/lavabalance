@@ -728,6 +728,9 @@ describe("private profiles in the UI", () => {
     expect(script).toContain('const DEFAULT_SORT = SHOW_LOS ? "board" : "tier";');
     // LOS is public: every reader gets the LOS leaderboard and its sorts.
     expect(script).toContain("const LOS_PUBLIC = true;");
+    // The two movement columns are hidden in the table; the API keeps them.
+    expect(script).toContain("const SHOW_CHANGES = false;");
+    expect(script).toContain('(col.key !== "rankchg" && col.key !== "loschg")');
     expect(script).toContain("const SHOW_LOS = ADMIN_MODE || LOS_PUBLIC;");
     expect(script).toContain('if (key === sort) dir = dir === "asc" ? "desc" : "asc";');
     // The order is the SERVER's — sorting the page in hand would only order the
