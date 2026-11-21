@@ -32,7 +32,7 @@ import {
   validToken,
   type AuthUser,
 } from "./auth";
-import { botAccessConfigured, botIdentity } from "./access";
+import { adminRequest, botAccessConfigured, botIdentity } from "./access";
 import { losStub } from "./los";
 
 type C = Context<{ Bindings: Env }>;
@@ -177,12 +177,14 @@ authApp.get("/api/me/privacy", async (c) => {
   if (!user) return c.json({ error: "not logged in", login: "/login" }, 401, NO_STORE);
   const state = await losStub(c.env).ownPrivacy(user.userId);
   if (!state) return fail(c, "you have no rated games yet", 404);
+  // An admin is never held by the wait (see the POST below).
+  if ((await adminRequest(c.env, c.req.raw)) !== null) state.privateLockedUntil = null;
   return c.json(state, 200, NO_STORE);
 });
 
 // Make your OWN profile private or public. Body {"private": true|false}.
 // Making it public starts a one-day cooldown during which it cannot be made
-// private again (409 with `privateLockedUntil`). Only ever the session's own
+// private again (409 with `privateLockedUntil`); an admin is never held. Only ever the session's own
 // account: there is no user id in the request to change.
 authApp.post("/api/me/privacy", async (c) => {
   if (!sameOrigin(c.req.header("origin"), c.req.url)) return fail(c, "cross-site request refused", 403);
@@ -191,7 +193,10 @@ authApp.post("/api/me/privacy", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { private?: unknown } | null;
   const wanted = body?.private;
   if (typeof wanted !== "boolean") return fail(c, 'body must be {"private": true|false}', 400);
-  const result = await losStub(c.env).setPrivateProfile(user.userId, wanted, { self: true });
+  // A signed-in admin changing their own profile is an admin change: no wait,
+  // and none started.
+  const admin = (await adminRequest(c.env, c.req.raw)) !== null;
+  const result = await losStub(c.env).setPrivateProfile(user.userId, wanted, { self: !admin });
   if (!result) return fail(c, "you have no rated games yet", 404);
   if (result.refused === "cooldown") {
     return c.json(

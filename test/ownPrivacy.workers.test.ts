@@ -137,6 +137,24 @@ describe("own profile privacy", () => {
     await expectRankedCount(15);
   });
 
+  it("does not hold an admin changing their own profile either", async () => {
+    const ADMIN = { ADMIN_OPEN: "true" } as Partial<Env>;
+    const asAdmin = (isPrivate: boolean) =>
+      request(
+        "/api/me/privacy",
+        { method: "POST", headers: { ...JSON_HDR, origin: BASE, cookie }, body: JSON.stringify({ private: isPrivate }) },
+        ADMIN,
+      );
+    expect((await asAdmin(true)).status).toBe(200);
+    expect((await asAdmin(false)).status).toBe(200);
+    expect((await asAdmin(true)).status).toBe(200); // no day's wait
+    expect((await asAdmin(false)).status).toBe(200);
+    const state = await (await request("/api/me/privacy", { headers: { cookie } }, ADMIN)).json();
+    expect(state).toMatchObject({ privateProfile: false, privateLockedUntil: null });
+    // ...and nothing was recorded to hold them once signed out.
+    expect((await setOwn(cookie, true)).status).toBe(200);
+  });
+
   it("does not touch another player's profile", async () => {
     expect((await setOwn(cookie, true)).status).toBe(200);
     expect((await getJson("/api/players/102")).privateProfile).toBe(false);
