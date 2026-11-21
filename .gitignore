@@ -11,3 +11,6 @@ data*/
 /log
 /log.x.txt
 .idea
+
+# cf CLI: generated Worker types (`cf workers types`) and Build Output
+.cloudflare/

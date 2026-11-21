@@ -98,10 +98,13 @@ both from `mise.toml`.
 
 ```bash
 pnpm install
-pnpm run typecheck
+pnpm run typecheck        # generates the Worker types (cf workers types), then tsc
 pnpm test                 # unit tests + Durable Object tests in workerd
-pnpm run dev              # Worker + site on http://localhost:8787
+pnpm run dev              # cf dev: Worker + site on http://localhost:8787
 ```
+
+`pnpm run dev` builds and runs the bot container too, which needs Docker;
+`DEV_CONTAINERS=false pnpm run dev` runs everything but the bot.
 
 For local development, put Worker settings in `.dev.vars` (gitignored):
 
@@ -123,9 +126,14 @@ To check the lobby protocol without the bot, use
 
 ## Configuration
 
-Non-secret settings are `vars` in `wrangler.jsonc`: the bot account name,
-admin names, Cloudflare Access domain and audiences, and enabled lobby
-sources. Secrets are set with `wrangler secret put`:
+The project is configured for Cloudflare's [`cf` CLI](https://developers.cloudflare.com/cf/)
+in `cloudflare.config.ts` (bindings, Durable Objects, the bot container, cron,
+custom domain), with the bundler's build and dev settings in
+`wrangler.config.ts`. Non-secret settings are text bindings under
+`worker.env` there: the bot account name, admin names, Cloudflare Access
+domain and audiences, and enabled lobby sources. Secrets are set with
+`pnpm exec wrangler secret put <NAME> --name lavabalance` (`cf` cannot set a
+single secret yet):
 
 | Secret | Used for |
 |---|---|
@@ -149,8 +157,9 @@ pnpm run deploy           # Worker + bot container image
 pnpm run bot:kick         # optional: restart the bot now instead of waiting for the cron
 ```
 
-`pnpm exec wrangler deploy --containers-rollout=none` deploys only the
-Worker. The bot keeps running its old image. See [`BOT.md`](./BOT.md#deploying)
+`pnpm exec cf deploy --containers-rollout none` deploys only the
+Worker. The bot keeps running its old image. `cf` still builds the image for
+that, so without Docker also set `BOT_IMAGE` to the image already deployed. See [`BOT.md`](./BOT.md#deploying)
 for details.
 
 ## License

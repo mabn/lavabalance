@@ -1,5 +1,6 @@
 node_modules
 .wrangler
+.cloudflare
 .dev.vars
 .env
 *.log
@@ -10,4 +11,5 @@ docs
 test
 tools
 public
-worker-configuration.d.ts
+cloudflare.config.ts
+wrangler.config.ts
