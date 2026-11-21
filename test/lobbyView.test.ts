@@ -107,7 +107,14 @@ describe("finalizeLobby", () => {
       losGames: null,
       losUserId: null,
       losHandicap: null,
+      tier: "placing", // no rated game yet = Placing 0/5, like anyone under 5
     });
+    // A private profile shows no tier at all.
+    const hidden = finalizeLobby(
+      { players: [...ROSTER, player({ name: "hidden", ally: 1 })] },
+      { ...RATINGS, hidden: rating(9, 50, 3, 200, true) },
+    ).players.find((p) => p.name === "hidden");
+    expect(hidden).toMatchObject({ losPrivate: true, tier: null });
   });
 
   it("numbers each player's place by displayed LOS, a withheld rating last", () => {

@@ -2720,7 +2720,9 @@ function lobbyRank(p) {
 
 function ratingPill(p) {
   if (!SHOW_LOS) return lobbyRank(p);
-  return (p.tier ? rankBadge(p.tier, p.losGames || 0, { size: 24 }) : '') + losPillOf(p);
+  // Never rated = Placing 0/5 (the server says so too); a private one shows none.
+  const tier = p.tier || (p.losPrivate ? null : "placing");
+  return (tier ? rankBadge(tier, p.losGames || 0, { size: 24 }) : '') + losPillOf(p);
 }
 
 function losPillOf(p) {
