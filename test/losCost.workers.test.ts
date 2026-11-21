@@ -160,6 +160,15 @@ describe("read cost", () => {
         ["WHERE ranked = 1", "ORDER BY tier DESC, games DESC, user_id", "idx_players_tier_ranked"],
         ["WHERE ranked = 1", "ORDER BY tier ASC, games ASC, user_id DESC", "idx_players_tier_ranked"],
         ["", "ORDER BY tier DESC, games DESC, user_id", "idx_players_tier"],
+        // The default board: tiers, each tier's public profiles by LOS, then its private ones by games.
+        ["WHERE inactive = 0",
+          "ORDER BY tier DESC, private_profile, (CASE WHEN private_profile = 1 THEN -games ELSE -los END), user_id",
+          "idx_players_board"],
+        ["WHERE inactive = 0",
+          "ORDER BY tier ASC, private_profile DESC, (CASE WHEN private_profile = 1 THEN -games ELSE -los END) DESC, user_id DESC",
+          "idx_players_board"],
+        ["", "ORDER BY tier DESC, private_profile, (CASE WHEN private_profile = 1 THEN -games ELSE -los END), user_id",
+          "idx_players_board_all"],
       ] as const) {
         const sorted = plan(`SELECT user_id FROM players ${where} ${order} LIMIT 50 OFFSET 0`);
         expect(sorted, order).toContain(index);

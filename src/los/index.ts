@@ -16,7 +16,7 @@ import type { ReplayDetail } from "../lavaos/types";
 import { parseRankingSort } from "./losDO";
 import type { LosEnv } from "./losDO";
 import { adminRequest, botIdentity, botAccessConfigured, type AdminEnv } from "../access";
-import { stripLos } from "./tiers";
+import { LOS_PUBLIC, visitorView } from "./tiers";
 
 const LOS_SINGLETON = "singleton";
 
@@ -50,13 +50,14 @@ async function adminView(c: Context<{ Bindings: Env }>): Promise<boolean> {
 }
 
 /**
- * LOS itself is for admins only: anyone else gets every LOS figure removed
- * (stripLos) and sees the rank tier the same answers carry. Keyed on the same
+ * While LOS is public (LOS_PUBLIC) a visitor gets the same body as an admin,
+ * private profiles aside; otherwise every LOS figure is removed (stripLos) and
+ * the visitor sees only the rank tier the same answers carry. Keyed on the same
  * admin view as the private profiles, so the shared edge cache never holds an
  * admin's copy (readCache: `no-store` whenever the flag is asked for).
  */
 function view<T>(admin: boolean, body: T): T {
-  return admin ? body : stripLos(body);
+  return admin ? body : visitorView(body);
 }
 
 function readCache(c: Context<{ Bindings: Env }>): Record<string, string> {
@@ -222,7 +223,11 @@ app.get("/api/ranking", async (c) => {
   // A visitor's list is the TIER board, always: tier, then games played. Every
   // other order (LOS, leaderboard position, either 7-day change) is the hidden
   // numbers' order given back, so a visitor's ?sort= only picks the direction.
-  const { sort, dir } = parseRankingSort(includePrivate ? c.req.query("sort") : "tier", c.req.query("dir"));
+  // (While LOS is public every order is a visitor's too.)
+  const { sort, dir } = parseRankingSort(
+    includePrivate || LOS_PUBLIC ? c.req.query("sort") : "tier",
+    c.req.query("dir"),
+  );
   const result = await losStub(c.env).ranking({
     page: intParam(c.req.query("page")),
     perPage: intParam(c.req.query("perPage")),
@@ -231,10 +236,10 @@ app.get("/api/ranking", async (c) => {
     sort,
     dir,
   });
-  if (includePrivate) return c.json(result, 200, readCache(c));
+  if (includePrivate || LOS_PUBLIC) return c.json(result, 200, readCache(c));
   // The leaderboard position's 7-day move is the LOS order's, so it goes too.
   const players = result.players.map((p) => ({ ...p, rankChange7d: null }));
-  return c.json(stripLos({ ...result, players }), 200, readCache(c));
+  return c.json(visitorView({ ...result, players }), 200, readCache(c));
 });
 
 /**
@@ -381,10 +386,10 @@ app.get("/api/players/:userId", async (c) => {
   const includePrivate = await adminView(c);
   const player = await losStub(c.env).player(userId, { includePrivate });
   if (player == null) return errorResponse(c, "no such player", 404);
-  if (includePrivate) return c.json(player, 200, readCache(c));
+  if (includePrivate || LOS_PUBLIC) return c.json(player, 200, readCache(c));
   // No leaderboard position on a visitor's profile: "#N of M" is the LOS order.
   const body = "rank" in player ? { ...player, rank: null, rankedOf: null } : player;
-  return c.json(stripLos(body), 200, readCache(c));
+  return c.json(visitorView(body), 200, readCache(c));
 });
 
 // One player's games, newest first, numbered pages (?page=N&limit=M) — the
@@ -407,8 +412,9 @@ app.get("/api/players/:userId/history", async (c) => {
   const userId = intParam(c.req.param("userId"));
   if (userId == null) return errorResponse(c, "userId must be a number", 400);
   const includePrivate = await adminView(c);
-  // The history IS the LOS chart: nothing of it is served outside the admin view.
-  if (!includePrivate) return c.json({ userId, points: [], losHidden: true }, 200, readCache(c));
+  // The history IS the LOS chart: nothing of it is served to a visitor unless
+  // LOS is public (a private profile's still has no points: see playerHistory).
+  if (!includePrivate && !LOS_PUBLIC) return c.json({ userId, points: [], losHidden: true }, 200, readCache(c));
   const history = await losStub(c.env).playerHistory(userId, { includePrivate });
   return c.json(history, 200, readCache(c));
 });

@@ -12,7 +12,7 @@ import { fetchScores, parseScoresRequest } from "./rating/lavaScores";
 import { ratingsStub } from "./rating/ratingsClient";
 import { finalizeLobby, shapeScores, type LosLobby } from "./lobbyView";
 import { fetchLosRatings } from "./losRatings";
-import { stripLos } from "./los/tiers";
+import { visitorView } from "./los/tiers";
 import {
   parseGameEndEvent,
   parseGameStartSnapshot,
@@ -446,8 +446,9 @@ app.get("/api/lobbies/:id", async (c) => {
           ? { gameStartAt: snap.startedAt, botBalanced: snap.botBalanced }
           : null,
     };
-    // LOS is admin-only: a visitor gets the rank tiers and the win chance.
-    return admin ? body : stripLos(body);
+    // A visitor gets LOS while it is public (LOS_PUBLIC), else the rank tiers
+    // and the win chance only. Private players are redacted either way.
+    return admin ? body : visitorView(body);
   };
 
   if (src === "proxy") {
