@@ -414,10 +414,9 @@ describe("LOBBY_HTML", () => {
       const script = inlineScript(html);
       expect(script).toContain("function teamTint(idx, j)");
     }
-    // Lists: the colour is fixed by LOS place before the highlighted player moves up.
+    // The /games list: colour by LOS place.
     const list = inlineScript(GAMES_HTML);
-    expect(list).toContain("const tint = new Map(sorted.map((p, j) => [p.userId, teamTint(idx, j)]));");
-    expect(list).toContain("nameLink(p, idx, p.userId === highlightId, tint.get(p.userId))");
+    expect(list).toContain(".map((p, j) => nameLink(p, idx, false, teamTint(idx, j)))");
     // The game page: row j of the LOS-sorted team.
     expect(inlineScript(GAME_HTML)).toContain("team.map((p, j) => playerRow(p, i, teamTint(i, j), parties))");
   });
@@ -831,7 +830,8 @@ describe("private profiles in the UI", () => {
     // The two reasons a row is unranked are told apart, and only one of them
     // takes the rating away.
     expect(rank).toContain('class="idlebadge"');
-    expect(rank).toContain("p.privateProfile\n    ? '<span class=\"privbadge\"");
+    expect(rank).toContain("p.privateProfile && ADMIN_MODE\n    ? '<span class=\"privbadge\"");
+    expect(rank).toContain("'<span class=\"hint quiet-hint\">' + QUIET_HINT_SVG");
     expect(rank).toContain(": p.inactive");
     // The rule's number comes from the API, so the page keeps no copy of it.
     expect(rank).toContain("if (data.inactiveDays) INACTIVE_DAYS = data.inactiveDays;");
@@ -934,5 +934,49 @@ describe("POLLS_HTML / LOGIN_HTML scripts", () => {
       const js = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>"));
       expect(() => new Function(js)).not.toThrow();
     }
+  });
+});
+
+describe("player chart Y axis", () => {
+  it("stays 0–60 unless a point goes past 60, then rounds up to the next 10", () => {
+    const script = inlineScript(PLAYER_HTML);
+    const start = script.indexOf("function chartYMax()");
+    const fn = script.slice(start, script.indexOf("\n}\n", start) + 3);
+    const yMax = (los: number[]) =>
+      new Function("Y_MAX", "chartPoints", fn + "return chartYMax();")(60, los.map((l) => ({ los: l })));
+    expect(yMax([])).toBe(60);
+    expect(yMax([12, 59.9])).toBe(60);
+    expect(yMax([60])).toBe(60);
+    expect(yMax([60.1])).toBe(70);
+    expect(yMax([41, 72.4])).toBe(80);
+  });
+});
+
+describe("player page game history rosters", () => {
+  const script = inlineScript(PLAYER_HTML);
+  const start = script.indexOf("// ---- Games-table cells");
+  const cells = script.slice(start, script.indexOf("// \"20.5 vs 22.1\"", start));
+  const rostersCell = new Function("esc", "byLosDesc", "playerHref", "TEAM_COLORS",
+    cells + "return rostersCell;")(
+    (s: unknown) => String(s),
+    (t: { los: number }[]) => [...t].sort((a, b) => b.los - a.los),
+    (id: number) => "/player/" + id,
+    [[], []],
+  ) as (g: unknown, id: number | null) => string;
+  const team = (ids: number[]) => ids.map((id, i) => ({ userId: id, name: "p" + id, los: 30 - i }));
+  const g = { teams: [team([1, 2, 3]), team([4, 5, 6])] };
+
+  it("leads with the owner's side, owner first, the only coloured name", () => {
+    const html = rostersCell(g, 5);
+    expect(html.indexOf(">p5<")).toBeLessThan(html.indexOf(">p1<"));
+    expect(html.indexOf(">p5<")).toBeLessThan(html.indexOf(">p4<"));
+    expect(html).toContain('class="rname me" href="/player/5"');
+    expect(html.match(/rname me/g)).toHaveLength(1);
+    expect(html).not.toContain("style=");
+    expect(html).not.toContain("tc0");
+  });
+
+  it("leaves the /games list coloured by team", () => {
+    expect(rostersCell(g, null)).toContain('class="tc0"');
   });
 });

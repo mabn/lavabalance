@@ -470,6 +470,16 @@ const STYLES = /* css */ `
     box-shadow: 0 4px 14px rgba(0,0,0,.5);
   }
   .hint:hover .hint-tip { display: block; }
+  /* A (?) that must not draw the eye (a private profile's withheld LOS on the
+     ranking): close to the row's background, outlined rather than filled. */
+  /* The mark is an SVG drawn on the circle's own centre: a text "?" sits wherever
+     the font's metrics put it, which was visibly off-centre in the row's font. */
+  .hint.quiet-hint {
+    background: transparent; color: #4f5863;
+    width: 16px; height: 16px; margin-right: 4px; vertical-align: middle;
+  }
+  .hint.quiet-hint svg { display: block; width: 16px; height: 16px; }
+  .hint.quiet-hint:hover { color: #9aa3ad; }
   /* Hint circle right of an LOS pill (rookie discount / assumed debutant): the
      same (?) visual as the average hints, absolutely hung in the rating cell's
      right padding so the right-aligned pills stay aligned across rows. */
@@ -1042,9 +1052,11 @@ const STYLES = /* css */ `
   .tc0 { color: #5b8cff; }
   .tc1 { color: #ff5f52; }
   a.tc0, a.tc1 { text-decoration: none; }
-  /* The player page's own name in the rosters. */
-  a.tc0.me, a.tc1.me { font-weight: 700; text-decoration: underline; }
   a.tc0:hover, a.tc1:hover { text-decoration: underline; }
+  /* The player page's rosters: everyone plain, the profile's owner in amber. */
+  a.rname { color: #e6e9ec; text-decoration: none; }
+  a.rname.me { color: #ffc24d; font-weight: 700; }
+  a.rname:hover { text-decoration: underline; }
   .card.wide { max-width: 1400px; }
   /* Wider than the generic card's 700 because the ranking carries two more
      columns than it used to (the Δ pair). The card is overflow:hidden for its
@@ -1850,7 +1862,7 @@ function withAdmin(url) {
 // would re-capture fixed descendants), and flip it above the marker when there
 // is no room below. Delegated, so it survives every re-render.
 document.addEventListener("mouseover", (e) => {
-  const hint = e.target && e.target.closest ? e.target.closest(".hint.pill-hint") : null;
+  const hint = e.target && e.target.closest ? e.target.closest(".hint.pill-hint, .hint.quiet-hint") : null;
   if (!hint) return;
   const tip = hint.querySelector(".hint-tip");
   if (!tip) return;
@@ -1874,7 +1886,7 @@ function gameHref(id) {
 // The same replay id names the game on onetricklava (the lava community's own
 // index, where the scraper discovers games) and on the official BAR replay site.
 function otlHref(id) {
-  return "https://onetricklava.com/games/" + encodeURIComponent(id);
+  return "https://otl.fogofwar.dev/games/" + encodeURIComponent(id);
 }
 function barHref(id) {
   return "https://www.beyondallreason.info/replays?gameId=" + encodeURIComponent(id);
@@ -1957,19 +1969,26 @@ function teamTint(idx, j) {
   return pal ? pal[j % pal.length] : null;
 }
 
-// "A, B, C +5" — the team's strongest names, the rest folded into a count. With a
-// highlightId, that player leads their side and is marked (the player page).
-function rosterCell(team, idx, highlightId) {
+// The player page's rosters, seen from the profile's owner: their own side
+// first whichever side it was, every other name plain, and only the owner
+// coloured — one fixed colour, so the eye finds them in every row at once.
+function ownRosterCell(team, highlightId) {
   let sorted = byLosDesc(team);
-  // The colour goes with the player's LOS place, so it is fixed before the
-  // highlighted player is moved to the front.
-  const tint = new Map(sorted.map((p, j) => [p.userId, teamTint(idx, j)]));
-  if (highlightId != null) {
-    const me = sorted.filter((p) => p.userId === highlightId);
-    sorted = me.concat(sorted.filter((p) => p.userId !== highlightId));
-  }
+  const me = sorted.filter((p) => p.userId === highlightId);
+  sorted = me.concat(sorted.filter((p) => p.userId !== highlightId));
+  const shown = sorted.slice(0, SHOWN_NAMES).map((p) =>
+    '<a class="rname' + (p.userId === highlightId ? ' me' : '') + '" href="' +
+      playerHref(p.userId) + '">' + esc(p.name) + '</a>').join(", ");
+  const more = sorted.length - SHOWN_NAMES;
+  return shown + (more > 0 ? ' <span class="more">+' + more + '</span>' : "");
+}
+
+// "A, B, C +5" — the team's strongest names in their assumed in-game colours,
+// the rest folded into a count (the /games table).
+function rosterCell(team, idx) {
+  const sorted = byLosDesc(team);
   const shown = sorted.slice(0, SHOWN_NAMES)
-    .map((p) => nameLink(p, idx, p.userId === highlightId, tint.get(p.userId))).join(", ");
+    .map((p, j) => nameLink(p, idx, false, teamTint(idx, j))).join(", ");
   const more = sorted.length - SHOWN_NAMES;
   return shown + (more > 0 ? ' <span class="more">+' + more + '</span>' : "");
 }
@@ -2009,7 +2028,13 @@ function gameBadges(g) {
 
 // Both rosters — "A, B, C +5 v D, E, F +5" — plus whatever badge the game wears.
 function rostersCell(g, highlightId) {
-  return g.teams.map((team, i) => rosterCell(team, i, highlightId)).join('<span class="vs">v</span>') +
+  if (highlightId != null) {
+    const own = g.teams.findIndex((t) => t.some((p) => p.userId === highlightId));
+    const teams = own > 0 ? [g.teams[own]].concat(g.teams.filter((_, i) => i !== own)) : g.teams;
+    return teams.map((team) => ownRosterCell(team, highlightId)).join('<span class="vs">v</span>') +
+      gameBadges(g);
+  }
+  return g.teams.map((team, i) => rosterCell(team, i)).join('<span class="vs">v</span>') +
     gameBadges(g);
 }
 
@@ -3327,7 +3352,10 @@ function nameCell(p) {
   // Both are LISTED, in a tail after the ranked players; the admin view gets
   // them in their true places and the badges only say which rows a visitor sees
   // differently.
-  const badge = p.privateProfile
+  // A visitor is told about a private profile only by the quiet (?) where its
+  // LOS would be (losPill); the badge is the admin's reminder of which rows a
+  // visitor sees differently.
+  const badge = p.privateProfile && ADMIN_MODE
     ? '<span class="privbadge" title="Private profile: not ranked, and its rating is not public">private</span>'
     : p.inactive
       ? '<span class="idlebadge" title="No rated game in the last ' + INACTIVE_DAYS +
@@ -3345,7 +3373,16 @@ function tierCell(p) {
   return p.tier == null ? '<span class="pill none">–</span>' : rankBadge(p.tier, p.games, { size: 28, text: true });
 }
 
+const QUIET_HINT_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor">' +
+  '<circle cx="8" cy="8" r="7.5" stroke-width="1" stroke-opacity=".55"/>' +
+  '<path d="M6 6.1a2 2 0 1 1 2.9 1.8c-.6.3-.9.7-.9 1.3v.4" stroke-width="1.4" stroke-linecap="round"/>' +
+  '<circle cx="8" cy="11.6" r=".8" fill="currentColor" stroke="none"/></svg>';
+
 function losPill(p) {
+  if (p.los == null && p.privateProfile) {
+    return '<span class="hint quiet-hint">' + QUIET_HINT_SVG + '<span class="hint-tip">' +
+      'This player\u2019s profile is private, so their LOS is not shown.</span></span>';
+  }
   // The blank rides in a pill box too (see .pill.none) so the LOS column reads
   // straight down past the private tail instead of stepping sideways at it.
   return (p.los == null
@@ -3762,13 +3799,19 @@ function profileCard(p) {
 //               player actually played; a break is a flat gap; time since the last
 //               game is empty space on the right).
 //   • "games" — x = the game's ordinal (1..N), equidistant.
-// y = LOS after that game, on a FIXED 0–60 axis shared by every player's chart so
-// two charts compare at a glance. Dots are colored by that game's result.
+// y = LOS after that game, on a 0–60 axis shared by every player's chart so two
+// charts compare at a glance; a player who went past 60 gets the next multiple
+// of 10 above their best instead (chartYMax), so no point is drawn off the top. Dots are colored by that game's result.
 // ZOOM (X only): drag a range with the mouse to zoom into it; double-click or the
 // "reset zoom" control restores the full axis. Switching modes resets the zoom.
 
 const PAD_L = 46, PAD_R = 14, PAD_T = 12, PAD_B = 26;
 const Y_MIN = 0, Y_MAX = 60;
+function chartYMax() {
+  let top = 0;
+  for (const p of chartPoints) if (p.los > top) top = p.los;
+  return top > Y_MAX ? Math.ceil(top / 10) * 10 : Y_MAX;
+}
 let chartPoints = [];
 let chartTimes = []; // Date.parse of each point's startTime, index-aligned
 let chartMode = localStorage.getItem("chartAxis") === "games" ? "games" : "time";
@@ -3798,6 +3841,7 @@ function chartScale(canvas) {
   const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
   const W = cssW - PAD_L - PAD_R, H = cssH - PAD_T - PAD_B;
   const dom = chartZoom || fullDomain();
+  const yMax = chartYMax();
   const d0 = dom[0], dSpan = dom[1] - dom[0];
   const xOf = (v) => PAD_L + (dSpan <= 0 ? W / 2 : ((v - d0) / dSpan) * W);
   const valueAt = (x) => (dSpan <= 0 ? d0 : d0 + ((x - PAD_L) / W) * dSpan);
@@ -3805,8 +3849,8 @@ function chartScale(canvas) {
     cssW, cssH, W, H,
     d0, dSpan, xOf, valueAt,
     x: (i) => xOf(axisValue(i)),
-    y: (v) => PAD_T + (1 - (v - Y_MIN) / (Y_MAX - Y_MIN)) * H,
-    min: Y_MIN, max: Y_MAX,
+    y: (v) => PAD_T + (1 - (v - Y_MIN) / (yMax - Y_MIN)) * H,
+    min: Y_MIN, max: yMax,
     // Is point i inside the (possibly zoomed) domain?
     visible: (i) => axisValue(i) >= d0 && axisValue(i) <= d0 + dSpan,
   };
